@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Comparte Ruta · Granada</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <!-- ═══════════════ LOGIN ═══════════════ -->
+  <div id="login-screen">
+    <div class="login-card">
+      <div class="login-logo">
+        <svg class="logo-svg" viewBox="0 0 40 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <polygon points="20,2 36,28 4,28" fill="currentColor"/>
+          <polygon points="20,14 34,36 6,36" fill="currentColor" opacity="0.7"/>
+          <rect x="16" y="36" width="8" height="10" fill="currentColor"/>
+        </svg>
+        <h1>Comparte Ruta</h1>
+        <p>Carpooling gratuito en la provincia de Granada</p>
+      </div>
+      <form id="login-form" novalidate>
+        <div class="form-group">
+          <label for="login-username">Usuario</label>
+          <input type="text" id="login-username" placeholder="Nombre de usuario" autocomplete="username" required>
+        </div>
+        <div class="form-group">
+          <label for="login-password">Contraseña</label>
+          <input type="password" id="login-password" placeholder="Contraseña" autocomplete="current-password" required>
+        </div>
+        <div id="login-error" class="msg msg-error hidden"></div>
+        <button type="submit" class="btn btn-primary btn-full">Entrar</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══════════════ APP ═══════════════ -->
+  <div id="app" class="hidden">
+
+    <nav class="navbar">
+      <div class="navbar-brand">
+        <svg class="nav-logo-svg" viewBox="0 0 40 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <polygon points="20,2 36,28 4,28" fill="currentColor"/>
+          <polygon points="20,14 34,36 6,36" fill="currentColor" opacity="0.7"/>
+          <rect x="16" y="36" width="8" height="10" fill="currentColor"/>
+        </svg>
+        <span class="brand-name">Comparte Ruta</span>
+      </div>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Menú">
+        <span></span><span></span><span></span>
+      </button>
+      <ul class="navbar-links" id="navbar-links">
+        <li><a href="#" class="nav-link active" data-section="sec1">Buscar Viajes</a></li>
+        <li><a href="#" class="nav-link" data-section="sec2">Publicar Viaje</a></li>
+        <li><a href="#" class="nav-link" data-section="sec3">Mi Perfil</a></li>
+        <li><a href="#" class="nav-link" data-section="sec4">Foro</a></li>
+        <li><a href="#" class="nav-link" data-section="sec5">Términos Legales</a></li>
+      </ul>
+      <div class="navbar-user" id="navbar-user">
+        <span id="nav-alias" class="nav-alias"></span>
+        <button id="logout-btn" class="btn btn-nav-outline">Salir</button>
+      </div>
+    </nav>
+
+    <main id="main">
+
+      <!-- ── SEC1: BUSCAR VIAJES ── -->
+      <section id="sec1" class="section">
+        <div class="section-header">
+          <h2>Buscar Viajes</h2>
+          <p>Encuentra un viaje compartido en la provincia de Granada</p>
+        </div>
+        <div class="search-layout">
+          <div class="search-panel">
+            <div class="card search-form-card">
+              <div class="form-group">
+                <label for="s1-origin">Origen</label>
+                <div class="ac-wrap">
+                  <input type="text" id="s1-origin" placeholder="Municipio de origen" autocomplete="off">
+                  <div class="ac-dropdown" id="s1-origin-dd"></div>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="s1-dest">Destino</label>
+                <div class="ac-wrap">
+                  <input type="text" id="s1-dest" placeholder="Municipio de destino" autocomplete="off">
+                  <div class="ac-dropdown" id="s1-dest-dd"></div>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="s1-date">Fecha</label>
+                <input type="date" id="s1-date">
+              </div>
+              <button id="s1-search-btn" class="btn btn-primary btn-full">Buscar</button>
+            </div>
+            <div id="s1-results" class="results-list"></div>
+          </div>
+          <div class="map-panel">
+            <div id="map-search" class="map-container"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── SEC2: PUBLICAR VIAJE ── -->
+      <section id="sec2" class="section hidden">
+        <div class="section-header">
+          <h2>Publicar un Viaje</h2>
+          <p>Comparte tu ruta con otros vecinos de Granada</p>
+        </div>
+        <div class="publish-layout">
+          <div class="publish-form-panel">
+            <div class="card">
+              <form id="publish-form" novalidate>
+                <div class="form-group">
+                  <label for="s2-origin">Origen <span class="req">*</span></label>
+                  <div class="ac-wrap">
+                    <input type="text" id="s2-origin" placeholder="Municipio de origen" autocomplete="off" required>
+                    <div class="ac-dropdown" id="s2-origin-dd"></div>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="s2-dest">Destino <span class="req">*</span></label>
+                  <div class="ac-wrap">
+                    <input type="text" id="s2-dest" placeholder="Municipio de destino" autocomplete="off" required>
+                    <div class="ac-dropdown" id="s2-dest-dd"></div>
+                  </div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="s2-date">Fecha <span class="req">*</span></label>
+                    <input type="date" id="s2-date" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="s2-time">Hora de salida <span class="req">*</span></label>
+                    <input type="time" id="s2-time" required>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="s2-seats">Plazas disponibles <span class="req">*</span></label>
+                  <input type="number" id="s2-seats" min="1" max="8" value="2" required>
+                </div>
+                <div class="form-group">
+                  <label for="s2-notes">Notas <span class="opt">(opcional)</span></label>
+                  <textarea id="s2-notes" rows="3" placeholder="Punto de encuentro, condiciones especiales..."></textarea>
+                </div>
+                <div id="s2-error" class="msg msg-error hidden"></div>
+                <div id="s2-success" class="msg msg-success hidden"></div>
+                <button type="submit" class="btn btn-primary btn-full">Publicar viaje</button>
+              </form>
+            </div>
+          </div>
+          <div class="publish-map-panel">
+            <div id="map-publish" class="map-container"></div>
+            <p class="map-hint">El mapa mostrará la ruta al seleccionar origen y destino</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── SEC3: PERFIL ── -->
+      <section id="sec3" class="section hidden">
+        <div class="section-header">
+          <h2>Mi Perfil</h2>
+          <p>Gestiona tu información y tus viajes</p>
+        </div>
+
+        <!-- Profile tabs -->
+        <div class="profile-tabs">
+          <button class="tab-btn active" data-tab="tab-info">Mi información</button>
+          <button class="tab-btn" data-tab="tab-my-trips">Mis viajes publicados</button>
+          <button class="tab-btn" data-tab="tab-my-bookings">Mis reservas</button>
+        </div>
+
+        <!-- Tab: Mi información -->
+        <div class="tab-content" id="tab-info">
+          <div class="profile-layout">
+            <div class="card profile-card">
+              <form id="profile-form" novalidate>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="p-alias">Alias <span class="req">*</span></label>
+                    <input type="text" id="p-alias" placeholder="El nombre que ven otros usuarios" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="p-email">Email <span class="req">*</span></label>
+                    <input type="email" id="p-email" placeholder="tu@email.com" required>
+                  </div>
+                </div>
+                <hr class="form-sep">
+                <h3 class="form-subtitle">Cambiar contraseña</h3>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="p-password">Nueva contraseña <span class="opt">(en blanco = no cambiar)</span></label>
+                    <input type="password" id="p-password" placeholder="Nueva contraseña" autocomplete="new-password">
+                  </div>
+                  <div class="form-group">
+                    <label for="p-password2">Confirmar contraseña</label>
+                    <input type="password" id="p-password2" placeholder="Repite la nueva contraseña" autocomplete="new-password">
+                  </div>
+                </div>
+                <hr class="form-sep">
+                <h3 class="form-subtitle">Preferencias de búsqueda</h3>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="p-walk">Distancia máxima a pie</label>
+                    <select id="p-walk">
+                      <option value="0">Solo mismo municipio (0 km)</option>
+                      <option value="0.5">500 metros</option>
+                      <option value="1">1 km</option>
+                      <option value="2">2 km</option>
+                      <option value="5">5 km</option>
+                      <option value="10">10 km</option>
+                    </select>
+                    <small class="field-hint">Los resultados incluirán viajes dentro de esta distancia de tu punto de búsqueda</small>
+                  </div>
+                  <div class="form-group">
+                    <label>Reportes recibidos</label>
+                    <div class="report-count-box" id="p-report-count-box">
+                      <span id="p-report-count-val">0</span>
+                      <span class="report-count-label">reporte(s) recibido(s)</span>
+                    </div>
+                  </div>
+                </div>
+                <hr class="form-sep">
+                <h3 class="form-subtitle">Datos adicionales <span class="opt">(opcional)</span></h3>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="p-municipio">Municipio de residencia</label>
+                    <input type="text" id="p-municipio" placeholder="Ej: Monachil">
+                  </div>
+                  <div class="form-group">
+                    <label for="p-cp">Código postal</label>
+                    <input type="text" id="p-cp" placeholder="Ej: 18193" maxlength="5" pattern="\d{5}">
+                  </div>
+                </div>
+                <div id="p-error" class="msg msg-error hidden"></div>
+                <div id="p-success" class="msg msg-success hidden"></div>
+                <button type="submit" class="btn btn-primary">Guardar cambios</button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Mis viajes publicados -->
+        <div class="tab-content hidden" id="tab-my-trips">
+          <div id="my-trips-list" class="my-trips-list"></div>
+        </div>
+
+        <!-- Tab: Mis reservas -->
+        <div class="tab-content hidden" id="tab-my-bookings">
+          <div id="my-bookings-list" class="my-trips-list"></div>
+        </div>
+
+      </section>
+
+      <!-- ── SEC4: FORO ── -->
+      <section id="sec4" class="section hidden">
+        <div class="section-header">
+          <h2>Foro de la Comunidad</h2>
+          <p>Comparte experiencias y resuelve dudas con otros usuarios</p>
+        </div>
+
+        <div id="forum-list-view">
+          <div class="forum-toolbar">
+            <button id="new-thread-btn" class="btn btn-primary">+ Nuevo hilo</button>
+          </div>
+          <div id="forum-threads-list" class="threads-list"></div>
+        </div>
+
+        <div id="forum-new-thread" class="hidden">
+          <div class="card">
+            <h3>Nuevo hilo</h3>
+            <form id="new-thread-form" novalidate>
+              <div class="form-group">
+                <label for="thread-title">Título <span class="req">*</span></label>
+                <input type="text" id="thread-title" placeholder="Título del hilo" required>
+              </div>
+              <div class="form-group">
+                <label for="thread-content">Mensaje <span class="req">*</span></label>
+                <textarea id="thread-content" rows="5" placeholder="Escribe tu mensaje..." required></textarea>
+              </div>
+              <div id="nf-error" class="msg msg-error hidden"></div>
+              <div class="form-actions">
+                <button type="button" id="cancel-thread-btn" class="btn btn-outline">Cancelar</button>
+                <button type="submit" class="btn btn-primary">Publicar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div id="forum-thread-view" class="hidden">
+          <button id="back-to-forum-btn" class="btn btn-outline btn-sm back-btn">&#8592; Volver al foro</button>
+          <div id="forum-thread-content"></div>
+        </div>
+      </section>
+
+      <!-- ── SEC5: TÉRMINOS LEGALES ── -->
+      <section id="sec5" class="section hidden">
+        <div class="section-header">
+          <h2>Términos y Condiciones de Uso</h2>
+          <p>Última actualización: agosto de 2026</p>
+        </div>
+        <div class="legal-content card">
+
+          <h3>1. Objeto del servicio</h3>
+          <p>Comparte Ruta Granada (en adelante, "la Plataforma") es un servicio web gratuito de intermediación cuyo único objeto es poner en contacto a personas residentes o con actividad en la provincia de Granada que deseen compartir desplazamientos en vehículo privado de forma voluntaria y sin contraprestación económica.</p>
+
+          <h3>2. Naturaleza del servicio y rol de los desarrolladores</h3>
+          <p>La Plataforma actúa exclusivamente como un tablón de anuncios digital. Los desarrolladores y operadores de la Plataforma <strong>no son una empresa de transporte</strong>, no organizan ni gestionan los viajes, no son parte en ningún acuerdo entre usuarios y no intervienen en la ejecución de ningún desplazamiento.</p>
+
+          <h3>3. Exención total de responsabilidad</h3>
+          <div class="legal-notice">
+            <p><strong>LOS DESARROLLADORES Y OPERADORES DE LA PLATAFORMA NO ASUMEN NINGUNA RESPONSABILIDAD, DE NINGÚN TIPO NI NATURALEZA, POR CUALQUIER INCIDENCIA, ACCIDENTE, DAÑO PERSONAL, MATERIAL O ECONÓMICO, PÉRDIDA, PERJUICIO O CUALQUIER OTRO EVENTO NEGATIVO QUE PUEDA PRODUCIRSE ANTES, DURANTE O DESPUÉS DE UN VIAJE COMPARTIDO ORGANIZADO A TRAVÉS DE ESTA PLATAFORMA.</strong></p>
+            <p>Esta exención incluye, de forma enunciativa y no limitativa:</p>
+            <ul>
+              <li>Accidentes de tráfico y sus consecuencias personales o materiales.</li>
+              <li>Incumplimiento de los compromisos adquiridos entre usuarios (puntualidad, cancelaciones, etc.).</li>
+              <li>Comportamientos inapropiados, ofensivos o delictivos de cualquier usuario.</li>
+              <li>Robo, pérdida o deterioro de objetos personales durante el trayecto.</li>
+              <li>Daños derivados de la información falsa o incorrecta publicada por los usuarios.</li>
+              <li>Cualquier perjuicio derivado del uso o de la imposibilidad de uso de la Plataforma.</li>
+            </ul>
+            <p>Cada usuario acepta que cualquier viaje se realiza bajo su exclusiva responsabilidad y riesgo, y que los conductores son los únicos responsables del cumplimiento de la normativa de tráfico y de la seguridad vial.</p>
+          </div>
+
+          <h3>4. Condiciones para el uso de la Plataforma</h3>
+          <p>Para utilizar la Plataforma el usuario debe:</p>
+          <ul>
+            <li>Ser mayor de edad (18 años) o contar con autorización del tutor legal.</li>
+            <li>Disponer de permiso de conducción válido y vehículo en regla si publica viajes como conductor.</li>
+            <li>Facilitar información veraz y actualizada.</li>
+            <li>Usar la Plataforma exclusivamente para compartir trayectos de forma gratuita, sin cobrar al pasajero por el desplazamiento.</li>
+          </ul>
+
+          <h3>5. Ámbito geográfico</h3>
+          <p>La Plataforma está diseñada para viajes dentro de la provincia de Granada (España). No se garantiza el funcionamiento ni la validez legal del servicio fuera de dicho ámbito.</p>
+
+          <h3>6. Normas del foro</h3>
+          <p>Los usuarios deben mantener un comportamiento respetuoso en el foro. Está prohibido publicar contenido ofensivo, discriminatorio, ilegal o ajeno al propósito de la Plataforma. Los administradores podrán eliminar cualquier mensaje sin previo aviso.</p>
+
+          <h3>7. Sistema de reportes de usuarios</h3>
+          <div class="legal-notice">
+            <p><strong>AL USAR ESTA PLATAFORMA, EL USUARIO ACEPTA EXPRESAMENTE QUE CUALQUIER REPORTE ENVIADO CONTRA OTRO USUARIO SERÁ PUBLICADO DE FORMA PÚBLICA EN EL FORO DE LA COMUNIDAD, INCLUYENDO EL CONTENIDO DEL MENSAJE DE REPORTE.</strong></p>
+          </div>
+          <p>La Plataforma dispone de un sistema de reportes que permite a los usuarios notificar comportamientos inapropiados de otros usuarios. El uso de esta funcionalidad conlleva las siguientes consecuencias:</p>
+          <ul>
+            <li>El contenido del reporte se publicará automáticamente como un hilo público en el foro de la comunidad, visible para todos los usuarios registrados.</li>
+            <li>El perfil del usuario reportado acumulará un contador de reportes recibidos, visible en su perfil.</li>
+            <li>Los reportes son permanentes y no pueden ser eliminados por el usuario que los emitió.</li>
+            <li>El uso malintencionado, falso o abusivo del sistema de reportes podrá dar lugar a la suspensión del acceso a la Plataforma.</li>
+          </ul>
+          <p>Los desarrolladores no verifican la veracidad de los reportes y no asumen responsabilidad alguna por el contenido publicado a través de este sistema.</p>
+
+          <h3>8. Protección de datos personales</h3>
+          <p>Los datos personales facilitados (alias, email, municipio, código postal) se almacenan exclusivamente para el funcionamiento del servicio y no se ceden a terceros. El email se usa únicamente para notificaciones de reserva y cancelación. De conformidad con el Reglamento (UE) 2016/679 (RGPD) y la Ley Orgánica 3/2018 (LOPDGDD), el usuario puede ejercer sus derechos de acceso, rectificación, supresión y portabilidad contactando con los administradores de la Plataforma.</p>
+
+          <h3>9. Modificación de las condiciones</h3>
+          <p>Los desarrolladores se reservan el derecho de modificar estos Términos y Condiciones en cualquier momento. Los cambios se notificarán mediante la actualización de la fecha indicada al inicio de este documento. El uso continuado de la Plataforma implica la aceptación de los nuevos términos.</p>
+
+          <h3>10. Legislación aplicable y jurisdicción</h3>
+          <p>Estos Términos se rigen por la legislación española. Para cualquier controversia, las partes se someten a los juzgados y tribunales de la ciudad de Granada, con renuncia expresa a cualquier otro fuero que pudiera corresponderles.</p>
+
+          <p class="legal-footer">Al utilizar la Plataforma, el usuario declara haber leído, comprendido y aceptado íntegramente estos Términos y Condiciones de Uso.</p>
+        </div>
+      </section>
+
+    </main>
+  </div><!-- #app -->
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

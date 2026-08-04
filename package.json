@@ -1,0 +1,19 @@
+{
+  "name": "carpooling-granada",
+  "version": "1.0.0",
+  "description": "Plataforma de carpooling gratuito para la provincia de Granada",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "nodemailer": "^6.9.9",
+    "uuid": "^9.0.0"
+  }
+}
