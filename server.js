@@ -486,6 +486,6 @@ app.post('/api/reports', requireAuth, async (req, res) => {
 initDB()
   .then(() => initTransporter())
   .then(() => {
-    app.listen(PORT, () => console.log(`Servidor v1.2 en http://localhost:${PORT}`));
+    app.listen(PORT, () => console.log(`Servidor v1.2 arriba en puerto ${PORT}`));
   })
   .catch(err => { console.error('Error al arrancar:', err); process.exit(1); });
