@@ -153,6 +153,15 @@ async function checkAuth() {
   catch { showLogin(); }
 }
 
+function switchAuthTab(tab) {
+  const isLogin = tab === 'login';
+  document.getElementById('login-form')?.classList.toggle('hidden', !isLogin);
+  document.getElementById('register-form')?.classList.toggle('hidden', isLogin);
+  document.getElementById('tab-login-btn')?.classList.toggle('active', isLogin);
+  document.getElementById('tab-register-btn')?.classList.toggle('active', !isLogin);
+  msgHide('login-error'); msgHide('reg-error');
+}
+
 async function login() {
   msgHide('login-error');
   try {
@@ -162,6 +171,23 @@ async function login() {
     });
     showApp();
   } catch (e) { msgShow('login-error', e.message); }
+}
+
+async function register() {
+  msgHide('reg-error');
+  const username  = document.getElementById('reg-username').value.trim();
+  const alias     = document.getElementById('reg-alias').value.trim();
+  const email     = document.getElementById('reg-email').value.trim();
+  const password  = document.getElementById('reg-password').value;
+  const password2 = document.getElementById('reg-password2').value;
+  if (!username || username.length < 3) { msgShow('reg-error', 'El usuario debe tener al menos 3 caracteres.'); return; }
+  if (!alias)                           { msgShow('reg-error', 'El alias es obligatorio.'); return; }
+  if (!password || password.length < 6) { msgShow('reg-error', 'La contraseña debe tener al menos 6 caracteres.'); return; }
+  if (password !== password2)           { msgShow('reg-error', 'Las contraseñas no coinciden.'); return; }
+  try {
+    state.user = await apiPost('/api/register', { username, alias, email, password });
+    showApp();
+  } catch (e) { msgShow('reg-error', e.message); }
 }
 
 async function logout() {
@@ -174,6 +200,7 @@ function showLogin() {
   show('login-screen'); hide('app');
   document.getElementById('login-username').value = '';
   document.getElementById('login-password').value = '';
+  switchAuthTab('login');
 }
 
 function showApp() {
@@ -427,16 +454,42 @@ async function publishTrip(e) {
   msgHide('s2-error'); msgHide('s2-success');
   if (!state.s2OriginCoords) { msgShow('s2-error', 'Selecciona el origen desde el desplegable de sugerencias.'); return; }
   if (!state.s2DestCoords)   { msgShow('s2-error', 'Selecciona el destino desde el desplegable de sugerencias.'); return; }
+
+  const recurrence = document.getElementById('s2-recurrence').value;
   const body = {
     origin: state.s2OriginCoords.name, originLat: state.s2OriginCoords.lat, originLng: state.s2OriginCoords.lng,
     destination: state.s2DestCoords.name, destinationLat: state.s2DestCoords.lat, destinationLng: state.s2DestCoords.lng,
-    date: document.getElementById('s2-date').value, time: document.getElementById('s2-time').value,
-    seats: document.getElementById('s2-seats').value, notes: document.getElementById('s2-notes').value,
+    time: document.getElementById('s2-time').value,
+    seats: document.getElementById('s2-seats').value,
+    notes: document.getElementById('s2-notes').value,
+    recurrence,
   };
+
+  if (recurrence === 'weekly') {
+    const from     = document.getElementById('s2-recur-from').value;
+    const to       = document.getElementById('s2-recur-to').value;
+    const weekdays = Array.from(document.querySelectorAll('[name="weekday"]:checked')).map(c => parseInt(c.value));
+    if (!from || !to)     { msgShow('s2-error', 'Selecciona el rango de fechas.'); return; }
+    if (from > to)        { msgShow('s2-error', 'La fecha de inicio debe ser anterior a la fecha de fin.'); return; }
+    if (!weekdays.length) { msgShow('s2-error', 'Selecciona al menos un día de la semana.'); return; }
+    body.recurrenceFrom = from;
+    body.recurrenceTo   = to;
+    body.weekdays       = weekdays;
+  } else {
+    const date = document.getElementById('s2-date').value;
+    if (!date) { msgShow('s2-error', 'La fecha es obligatoria.'); return; }
+    body.date = date;
+  }
+
   try {
-    await apiPost('/api/trips', body);
-    msgShow('s2-success', 'Viaje publicado correctamente.', 'success');
+    const result = await apiPost('/api/trips', body);
+    const msg = result.recurrent
+      ? `${result.count} viajes publicados: ${result.label}`
+      : 'Viaje publicado correctamente.';
+    msgShow('s2-success', msg, 'success');
     document.getElementById('publish-form').reset();
+    document.getElementById('s2-recurrence').value = 'single';
+    show('s2-date-wrap'); hide('s2-recur-wrap');
     state.s2OriginCoords = null; state.s2DestCoords = null;
     state.publishRoute   = clearLayer(state.publishMap, state.publishRoute);
     state.publishMarkers = clearLayer(state.publishMap, state.publishMarkers);
@@ -513,12 +566,16 @@ async function loadMyTrips() {
               <button class="btn btn-danger btn-sm cancel-booking-btn" data-trip-id="${esc(t.id)}" data-booking-id="${esc(b.id)}">Cancelar</button>
             </div>`).join('')
         : '<p class="no-passengers">Sin reservas todavía.</p>';
+      const recurBadge = t.recurrenceLabel
+        ? `<span class="badge badge-recur" title="Serie recurrente">&#8635; ${esc(t.recurrenceLabel)}</span>`
+        : '';
       return `
         <div class="my-trip-card">
           <div class="my-trip-header">
             <div>
               <div class="my-trip-route">${esc(t.origin)}<span class="arrow">&#10132;</span>${esc(t.destination)}</div>
-              <div class="my-trip-meta">&#128197; ${esc(fmtDate(t.date))} · &#128336; ${esc(t.time)} · ${esc(t.availableSeats ?? t.seats)} plaza(s) libre(s)</div>
+              <div class="my-trip-meta">&#128197; ${esc(fmtDate(t.date))} · &#128336; ${esc(t.time)} · ${esc(String(t.availableSeats ?? t.seats))} plaza(s) libre(s)</div>
+              ${recurBadge}
             </div>
           </div>
           <div class="passengers-list">${passengerRows}</div>
@@ -698,9 +755,19 @@ async function createThread(e) {
    EVENT LISTENERS
 ══════════════════════════════════════════════════════════ */
 function bindEvents() {
-  // Auth
+  // Auth tabs
+  document.getElementById('tab-login-btn')?.addEventListener('click', () => switchAuthTab('login'));
+  document.getElementById('tab-register-btn')?.addEventListener('click', () => switchAuthTab('register'));
   document.getElementById('login-form').addEventListener('submit', e => { e.preventDefault(); login(); });
+  document.getElementById('register-form').addEventListener('submit', e => { e.preventDefault(); register(); });
   document.getElementById('logout-btn').addEventListener('click', logout);
+
+  // Recurrence toggle
+  document.getElementById('s2-recurrence')?.addEventListener('change', () => {
+    const weekly = document.getElementById('s2-recurrence').value === 'weekly';
+    document.getElementById('s2-date-wrap')?.classList.toggle('hidden', weekly);
+    document.getElementById('s2-recur-wrap')?.classList.toggle('hidden', !weekly);
+  });
 
   // Nav
   document.querySelectorAll('.nav-link').forEach(a => a.addEventListener('click', e => { e.preventDefault(); showSection(a.dataset.section); }));

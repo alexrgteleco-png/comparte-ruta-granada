@@ -768,3 +768,74 @@ hr { border: none; }
   .form-row { grid-template-columns: 1fr; }
   .login-card { padding: 2rem 1.25rem; }
 }
+
+/* ── Auth tabs (login / register) ───────────────────────────────────────── */
+.auth-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 1.5rem;
+  border: 2px solid var(--c-border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.auth-tab {
+  flex: 1;
+  padding: .55rem .75rem;
+  font-size: .9rem;
+  font-weight: 600;
+  color: var(--c-text-sec);
+  background: var(--c-surface-alt);
+  transition: background var(--t), color var(--t);
+}
+.auth-tab.active {
+  background: var(--c-primary);
+  color: #fff;
+}
+.auth-tab:not(.active):hover { background: var(--c-primary-pale); }
+
+/* ── Weekday selector (recurrencia) ─────────────────────────────────────── */
+.weekday-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin-top: .35rem;
+}
+.weekday-opt {
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+  padding: .35rem .7rem;
+  border: 2px solid var(--c-border);
+  border-radius: var(--r);
+  cursor: pointer;
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--c-text-sec);
+  background: var(--c-surface-alt);
+  transition: background var(--t), border-color var(--t), color var(--t);
+  user-select: none;
+}
+.weekday-opt:has(input:checked) {
+  background: var(--c-primary-pale);
+  border-color: var(--c-primary);
+  color: var(--c-primary);
+}
+.weekday-opt input { display: none; }
+
+/* ── Badge: recurrencia ─────────────────────────────────────────────────── */
+.badge-recur {
+  background: var(--c-amber-pale);
+  color: var(--c-amber);
+  border: 1px solid var(--c-amber-light);
+  font-size: .72rem;
+  padding: .15rem .5rem;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  margin-top: .3rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}

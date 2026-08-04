@@ -23,6 +23,10 @@
         <h1>Comparte Ruta</h1>
         <p>Carpooling gratuito en la provincia de Granada</p>
       </div>
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tab-login-btn">Iniciar sesión</button>
+        <button class="auth-tab" id="tab-register-btn">Registrarse</button>
+      </div>
       <form id="login-form" novalidate>
         <div class="form-group">
           <label for="login-username">Usuario</label>
@@ -34,6 +38,30 @@
         </div>
         <div id="login-error" class="msg msg-error hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Entrar</button>
+      </form>
+      <form id="register-form" class="hidden" novalidate>
+        <div class="form-group">
+          <label for="reg-username">Usuario <span class="req">*</span></label>
+          <input type="text" id="reg-username" placeholder="Mín. 3 caracteres, sin espacios" autocomplete="username" required>
+        </div>
+        <div class="form-group">
+          <label for="reg-alias">Alias <span class="req">*</span> <span class="opt">(nombre visible)</span></label>
+          <input type="text" id="reg-alias" placeholder="Ej: Ana García" required>
+        </div>
+        <div class="form-group">
+          <label for="reg-email">Email <span class="opt">(para notificaciones de reserva)</span></label>
+          <input type="email" id="reg-email" placeholder="tu@email.com" autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label for="reg-password">Contraseña <span class="req">*</span> <span class="opt">(mín. 6 caracteres)</span></label>
+          <input type="password" id="reg-password" placeholder="Contraseña" autocomplete="new-password" required>
+        </div>
+        <div class="form-group">
+          <label for="reg-password2">Confirmar contraseña <span class="req">*</span></label>
+          <input type="password" id="reg-password2" placeholder="Repite la contraseña" autocomplete="new-password" required>
+        </div>
+        <div id="reg-error" class="msg msg-error hidden"></div>
+        <button type="submit" class="btn btn-primary btn-full">Crear cuenta</button>
       </form>
     </div>
   </div>
@@ -131,12 +159,45 @@
                 </div>
                 <div class="form-row">
                   <div class="form-group">
-                    <label for="s2-date">Fecha <span class="req">*</span></label>
-                    <input type="date" id="s2-date" required>
-                  </div>
-                  <div class="form-group">
                     <label for="s2-time">Hora de salida <span class="req">*</span></label>
                     <input type="time" id="s2-time" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="s2-recurrence">Tipo de publicación</label>
+                    <select id="s2-recurrence">
+                      <option value="single">Viaje único</option>
+                      <option value="weekly">Recurrente (semanal)</option>
+                    </select>
+                  </div>
+                </div>
+                <!-- Única fecha -->
+                <div id="s2-date-wrap" class="form-group">
+                  <label for="s2-date">Fecha <span class="req">*</span></label>
+                  <input type="date" id="s2-date">
+                </div>
+                <!-- Opciones recurrentes -->
+                <div id="s2-recur-wrap" class="hidden">
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label for="s2-recur-from">Desde <span class="req">*</span></label>
+                      <input type="date" id="s2-recur-from">
+                    </div>
+                    <div class="form-group">
+                      <label for="s2-recur-to">Hasta <span class="req">*</span></label>
+                      <input type="date" id="s2-recur-to">
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label>Días de la semana <span class="req">*</span></label>
+                    <div class="weekday-selector">
+                      <label class="weekday-opt"><input type="checkbox" name="weekday" value="1"> Lun</label>
+                      <label class="weekday-opt"><input type="checkbox" name="weekday" value="2"> Mar</label>
+                      <label class="weekday-opt"><input type="checkbox" name="weekday" value="3"> Mié</label>
+                      <label class="weekday-opt"><input type="checkbox" name="weekday" value="4"> Jue</label>
+                      <label class="weekday-opt"><input type="checkbox" name="weekday" value="5"> Vie</label>
+                      <label class="weekday-opt"><input type="checkbox" name="weekday" value="6"> Sáb</label>
+                      <label class="weekday-opt"><input type="checkbox" name="weekday" value="0"> Dom</label>
+                    </div>
                   </div>
                 </div>
                 <div class="form-group">

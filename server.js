@@ -4,13 +4,34 @@ const express  = require('express');
 const session  = require('express-session');
 const bcrypt   = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
-const fs       = require('fs');
 const path     = require('path');
+const { MongoClient } = require('mongodb');
 const { initTransporter, sendEmail } = require('./emailService');
 
-const app    = express();
-const PORT   = process.env.PORT || 3000;
-const DB_PATH = path.join(__dirname, 'data', 'db.json');
+const app  = express();
+const PORT = process.env.PORT || 3000;
+
+// ── MongoDB ───────────────────────────────────────────────────────────────────
+
+let _client = null;
+let _mdb    = null;
+
+async function connectDB() {
+  if (_mdb) return _mdb;
+  if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI no configurado');
+  _client = new MongoClient(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 10000 });
+  await _client.connect();
+  _mdb = _client.db('carpooling');
+  console.log('MongoDB conectado');
+  return _mdb;
+}
+
+function col(name) {
+  if (!_mdb) throw new Error('DB no conectada');
+  return _mdb.collection(name);
+}
+
+// ── Express setup ─────────────────────────────────────────────────────────────
 
 app.set('trust proxy', 1);
 app.use(express.json());
@@ -20,19 +41,14 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    maxAge: 24 * 60 * 60 * 1000,
+    maxAge:   24 * 60 * 60 * 1000,
     httpOnly: true,
     secure:   process.env.NODE_ENV === 'production',
     sameSite: 'lax'
   }
 }));
 
-// ── DB helpers ───────────────────────────────────────────────────────────────
-
-function loadDB() { return JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); }
-function saveDB(db) { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf8'); }
-
-// ── Geo helper ───────────────────────────────────────────────────────────────
+// ── Geo helpers ───────────────────────────────────────────────────────────────
 
 function haversineKm(lat1, lon1, lat2, lon2) {
   const R = 6371, r = x => x * Math.PI / 180;
@@ -44,39 +60,29 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 
 function matchesLocation(tripName, tripLat, tripLng, searchName, searchLat, searchLng, walkKm) {
   if (!searchName && !searchLat) return true;
-  // Criterion 1 — same municipality name
   if (searchName && tripName.toLowerCase().includes(searchName.toLowerCase())) return true;
-  // Criterion 2 — within walking distance
-  if (searchLat && searchLng && tripLat && tripLng && walkKm > 0) {
+  if (searchLat && searchLng && tripLat && tripLng && walkKm > 0)
     if (haversineKm(tripLat, tripLng, parseFloat(searchLat), parseFloat(searchLng)) <= walkKm) return true;
-  }
   return false;
 }
 
-// ── DB init / migration ──────────────────────────────────────────────────────
+// ── Recurrence helper ─────────────────────────────────────────────────────────
+
+function generateDates(from, to, weekdays) {
+  const result = [];
+  const end = new Date(to + 'T00:00:00');
+  for (let d = new Date(from + 'T00:00:00'); d <= end; d.setDate(d.getDate() + 1))
+    if (weekdays.includes(d.getDay())) result.push(d.toISOString().split('T')[0]);
+  return result;
+}
+
+// ── DB seed ───────────────────────────────────────────────────────────────────
 
 async function initDB() {
-  const dataDir = path.join(__dirname, 'data');
-  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  const mdb = await connectDB();
+  const count = await mdb.collection('users').countDocuments();
+  if (count > 0) { console.log('MongoDB: datos existentes, omitiendo seed.'); return; }
 
-  if (fs.existsSync(DB_PATH)) {
-    // Migrate existing data to v1.1 schema
-    const db = loadDB();
-    let changed = false;
-    for (const u of db.users) {
-      if (u.email              === undefined) { u.email              = '';  changed = true; }
-      if (u.walkingDistanceKm  === undefined) { u.walkingDistanceKm  = 1;   changed = true; }
-      if (u.reportCount        === undefined) { u.reportCount        = 0;   changed = true; }
-    }
-    for (const t of db.trips) {
-      if (!t.bookings) { t.bookings = []; changed = true; }
-    }
-    if (!db.reports) { db.reports = []; changed = true; }
-    if (changed) { saveDB(db); console.log('Base de datos migrada a v1.1'); }
-    return;
-  }
-
-  // Fresh DB
   const h1 = await bcrypt.hash('Password1', 10);
   const h2 = await bcrypt.hash('Password2', 10);
   const uid1 = uuidv4(), uid2 = uuidv4(), uid3 = uuidv4();
@@ -86,63 +92,64 @@ async function initDB() {
   const d2 = new Date(now); d2.setDate(now.getDate() + 2);
   const d3 = new Date(now); d3.setDate(now.getDate() + 3);
 
-  const db = {
-    users: [
-      { id: uid1, username: 'user1', password: h1, alias: 'Carlos', role: 'user',  email: 'user1@demo.es',  municipio: 'Monachil',     codigoPostal: '18193', walkingDistanceKm: 1, reportCount: 0 },
-      { id: uid2, username: 'user2', password: h1, alias: 'María',  role: 'user',  email: 'user2@demo.es',  municipio: 'Güéjar Sierra', codigoPostal: '18160', walkingDistanceKm: 2, reportCount: 0 },
-      { id: uid3, username: 'admin1',password: h2, alias: 'Admin',  role: 'admin', email: 'admin@demo.es',  municipio: 'Granada',       codigoPostal: '18001', walkingDistanceKm: 0, reportCount: 0 }
-    ],
-    trips: [
-      { id: uuidv4(), userId: uid1, origin: 'Monachil',     originLat: 37.1547, originLng: -3.5402, destination: 'Granada', destinationLat: 37.1773, destinationLng: -3.5986, date: fmt(d1), time: '08:00', seats: 3, notes: 'Salgo del centro de Monachil, paso por la calle Real.', createdAt: now.toISOString(), bookings: [] },
-      { id: uuidv4(), userId: uid2, origin: 'Güéjar Sierra', originLat: 37.1502, originLng: -3.4698, destination: 'Granada', destinationLat: 37.1773, destinationLng: -3.5986, date: fmt(d1), time: '07:30', seats: 2, notes: '', createdAt: now.toISOString(), bookings: [] },
-      { id: uuidv4(), userId: uid1, origin: 'Monachil',     originLat: 37.1547, originLng: -3.5402, destination: 'Granada', destinationLat: 37.1773, destinationLng: -3.5986, date: fmt(d2), time: '08:30', seats: 4, notes: 'Vuelta a las 18:00 si alguien necesita.', createdAt: now.toISOString(), bookings: [] },
-      { id: uuidv4(), userId: uid2, origin: 'Loja',          originLat: 37.1679, originLng: -4.1508, destination: 'Granada', destinationLat: 37.1773, destinationLng: -3.5986, date: fmt(d3), time: '09:00', seats: 1, notes: 'Ruta por la A-92.', createdAt: now.toISOString(), bookings: [] }
-    ],
-    forum: {
-      threads: [
-        { id: uuidv4(), userId: uid3, title: 'Bienvenidos al foro de Comparte Ruta Granada', content: '¡Hola a todos! Este espacio es para compartir experiencias, hacer preguntas y conectar con otros usuarios del carpooling en Granada.', createdAt: now.toISOString(), replies: [
-          { id: uuidv4(), userId: uid1, content: '¡Gracias por la bienvenida! ¿Hay mucha gente de la zona de Monachil?', createdAt: new Date(now.getTime() + 3600000).toISOString() },
-          { id: uuidv4(), userId: uid2, content: 'Yo soy de Güéjar Sierra y suelo ir a Granada varias veces a la semana.', createdAt: new Date(now.getTime() + 7200000).toISOString() }
-        ]},
-        { id: uuidv4(), userId: uid1, title: 'Consejos para compartir viaje por primera vez', content: 'Algunos consejos: sé puntual, avisa si no puedes ir, respeta el vehículo. ¿Tenéis más sugerencias?', createdAt: new Date(now.getTime() - 86400000).toISOString(), replies: [] }
-      ]
-    },
-    reports: []
-  };
+  await mdb.collection('users').insertMany([
+    { id: uid1, username: 'user1',  password: h1, alias: 'Carlos', role: 'user',  email: 'user1@demo.es',  municipio: 'Monachil',      codigoPostal: '18193', walkingDistanceKm: 1, reportCount: 0, createdAt: now.toISOString() },
+    { id: uid2, username: 'user2',  password: h1, alias: 'María',  role: 'user',  email: 'user2@demo.es',  municipio: 'Güéjar Sierra', codigoPostal: '18160', walkingDistanceKm: 2, reportCount: 0, createdAt: now.toISOString() },
+    { id: uid3, username: 'admin1', password: h2, alias: 'Admin',  role: 'admin', email: 'admin@demo.es',  municipio: 'Granada',       codigoPostal: '18001', walkingDistanceKm: 0, reportCount: 0, createdAt: now.toISOString() }
+  ]);
 
-  saveDB(db);
-  console.log('Base de datos v1.1 inicializada.');
+  await mdb.collection('trips').insertMany([
+    { id: uuidv4(), userId: uid1, origin: 'Monachil',      originLat: 37.1547, originLng: -3.5402, destination: 'Granada', destinationLat: 37.1773, destinationLng: -3.5986, date: fmt(d1), time: '08:00', seats: 3, notes: 'Salgo del centro de Monachil, paso por la calle Real.', createdAt: now.toISOString(), bookings: [], recurrenceGroupId: null, recurrenceLabel: null },
+    { id: uuidv4(), userId: uid2, origin: 'Güéjar Sierra', originLat: 37.1502, originLng: -3.4698, destination: 'Granada', destinationLat: 37.1773, destinationLng: -3.5986, date: fmt(d1), time: '07:30', seats: 2, notes: '', createdAt: now.toISOString(), bookings: [], recurrenceGroupId: null, recurrenceLabel: null },
+    { id: uuidv4(), userId: uid1, origin: 'Monachil',      originLat: 37.1547, originLng: -3.5402, destination: 'Granada', destinationLat: 37.1773, destinationLng: -3.5986, date: fmt(d2), time: '08:30', seats: 4, notes: 'Vuelta a las 18:00 si alguien necesita.', createdAt: now.toISOString(), bookings: [], recurrenceGroupId: null, recurrenceLabel: null },
+    { id: uuidv4(), userId: uid2, origin: 'Loja',           originLat: 37.1679, originLng: -4.1508, destination: 'Granada', destinationLat: 37.1773, destinationLng: -3.5986, date: fmt(d3), time: '09:00', seats: 1, notes: 'Ruta por la A-92.', createdAt: now.toISOString(), bookings: [], recurrenceGroupId: null, recurrenceLabel: null }
+  ]);
+
+  await mdb.collection('threads').insertMany([
+    { id: uuidv4(), userId: uid3, title: 'Bienvenidos al foro de Comparte Ruta Granada', content: '¡Hola a todos! Este espacio es para compartir experiencias, hacer preguntas y conectar con otros usuarios del carpooling en Granada.', createdAt: now.toISOString(), replies: [
+      { id: uuidv4(), userId: uid1, content: '¡Gracias por la bienvenida! ¿Hay mucha gente de la zona de Monachil?', createdAt: new Date(now.getTime() + 3600000).toISOString() },
+      { id: uuidv4(), userId: uid2, content: 'Yo soy de Güéjar Sierra y suelo ir a Granada varias veces a la semana.', createdAt: new Date(now.getTime() + 7200000).toISOString() }
+    ], isReport: false },
+    { id: uuidv4(), userId: uid1, title: 'Consejos para compartir viaje por primera vez', content: 'Algunos consejos: sé puntual, avisa si no puedes ir, respeta el vehículo. ¿Tenéis más sugerencias?', createdAt: new Date(now.getTime() - 86400000).toISOString(), replies: [], isReport: false }
+  ]);
+
+  console.log('MongoDB: seed v1.2 completado.');
 }
 
-// ── Auth middleware ──────────────────────────────────────────────────────────
+// ── Auth middleware ───────────────────────────────────────────────────────────
 
 function requireAuth(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'No autenticado' });
   next();
 }
 
-function requireAdmin(req, res, next) {
-  const db   = loadDB();
-  const user = db.users.find(u => u.id === req.session.userId);
-  if (!user || user.role !== 'admin') return res.status(403).json({ error: 'Acceso denegado' });
-  next();
+async function requireAdmin(req, res, next) {
+  try {
+    const user = await col('users').findOne({ id: req.session.userId });
+    if (!user || user.role !== 'admin') return res.status(403).json({ error: 'Acceso denegado' });
+    next();
+  } catch { res.status(500).json({ error: 'Error interno' }); }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function safeUser(u) { const { password, ...s } = u; return s; }
+function safeUser(u) {
+  if (!u) return null;
+  const { password, _id, ...s } = u;
+  return s;
+}
 
-function enrichTrip(t, db, sessionUserId) {
-  const owner = db.users.find(u => u.id === t.userId);
+function enrichTrip(t, users, sessionUserId) {
+  const owner    = users.find(u => u.id === t.userId);
   const bookings = (t.bookings || []).map(b => {
-    const bu = db.users.find(u => u.id === b.userId);
+    const bu = users.find(u => u.id === b.userId);
     return { ...b, userAlias: bu?.alias || 'Usuario' };
   });
   const myBooking = (t.bookings || []).find(b => b.userId === sessionUserId) || null;
+  const { _id, ...tripData } = t;
   return {
-    ...t,
+    ...tripData,
     userAlias:      owner?.alias || 'Usuario',
-    ownerEmail:     undefined, // never expose to client
     bookings,
     myBooking,
     isOwn:          t.userId === sessionUserId,
@@ -150,14 +157,48 @@ function enrichTrip(t, db, sessionUserId) {
   };
 }
 
-// ── Auth routes ──────────────────────────────────────────────────────────────
+// ── Auth routes ───────────────────────────────────────────────────────────────
+
+app.post('/api/register', async (req, res) => {
+  try {
+    const { username, password, alias, email } = req.body;
+    if (!username?.trim() || !password?.trim() || !alias?.trim())
+      return res.status(400).json({ error: 'Usuario, alias y contraseña son obligatorios' });
+    if (username.trim().length < 3)
+      return res.status(400).json({ error: 'El nombre de usuario debe tener al menos 3 caracteres' });
+    if (password.length < 6)
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+
+    const users = col('users');
+    if (await users.findOne({ username: username.toLowerCase().trim() }))
+      return res.status(400).json({ error: 'Ese nombre de usuario ya está en uso' });
+    if (email?.trim() && await users.findOne({ email: email.trim() }))
+      return res.status(400).json({ error: 'Ese email ya está registrado' });
+
+    const user = {
+      id:               uuidv4(),
+      username:         username.toLowerCase().trim(),
+      password:         await bcrypt.hash(password, 10),
+      alias:            alias.trim(),
+      role:             'user',
+      email:            email?.trim() || '',
+      municipio:        '',
+      codigoPostal:     '',
+      walkingDistanceKm: 1,
+      reportCount:      0,
+      createdAt:        new Date().toISOString()
+    };
+    await users.insertOne(user);
+    req.session.userId = user.id;
+    res.json(safeUser(user));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
+});
 
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Faltan credenciales' });
-    const db   = loadDB();
-    const user = db.users.find(u => u.username === username);
+    const user = await col('users').findOne({ username: username.toLowerCase().trim() });
     if (!user || !(await bcrypt.compare(password, user.password)))
       return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
     req.session.userId = user.id;
@@ -167,280 +208,277 @@ app.post('/api/login', async (req, res) => {
 
 app.post('/api/logout', (req, res) => { req.session.destroy(() => res.json({ ok: true })); });
 
-app.get('/api/me', requireAuth, (req, res) => {
-  const db   = loadDB();
-  const user = db.users.find(u => u.id === req.session.userId);
-  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
-  res.json(safeUser(user));
+app.get('/api/me', requireAuth, async (req, res) => {
+  try {
+    const user = await col('users').findOne({ id: req.session.userId });
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+    res.json(safeUser(user));
+  } catch { res.status(500).json({ error: 'Error interno' }); }
 });
 
-// ── Trips routes ─────────────────────────────────────────────────────────────
+// ── Trips routes ──────────────────────────────────────────────────────────────
 
-app.get('/api/trips', (req, res) => {
-  const db = loadDB();
-  const { origin, originLat, originLng, destination, destLat, destLng, date } = req.query;
+app.get('/api/trips', async (req, res) => {
+  try {
+    const { origin, originLat, originLng, destination, destLat, destLng, date } = req.query;
+    const uid   = req.session.userId;
+    const users = await col('users').find({}).toArray();
+    const usr   = uid ? users.find(u => u.id === uid) : null;
+    const walkKm = usr?.walkingDistanceKm ?? 1;
 
-  const uid  = req.session.userId;
-  const usr  = uid ? db.users.find(u => u.id === uid) : null;
-  const walkKm = usr?.walkingDistanceKm ?? 1;
+    let trips = await col('trips').find({}).toArray();
+    if (origin || originLat)    trips = trips.filter(t => matchesLocation(t.origin,      t.originLat,      t.originLng,      origin,      originLat, originLng, walkKm));
+    if (destination || destLat) trips = trips.filter(t => matchesLocation(t.destination, t.destinationLat, t.destinationLng, destination, destLat,   destLng,   walkKm));
+    if (date)                   trips = trips.filter(t => t.date === date);
 
-  let trips = db.trips;
-  if (origin || originLat)      trips = trips.filter(t => matchesLocation(t.origin,      t.originLat,      t.originLng,      origin,      originLat, originLng, walkKm));
-  if (destination || destLat)   trips = trips.filter(t => matchesLocation(t.destination, t.destinationLat, t.destinationLng, destination, destLat,   destLng,   walkKm));
-  if (date)                     trips = trips.filter(t => t.date === date);
-
-  res.json(trips.map(t => enrichTrip(t, db, uid)));
+    res.json(trips.map(t => enrichTrip(t, users, uid)));
+  } catch { res.status(500).json({ error: 'Error interno' }); }
 });
 
-app.get('/api/my-trips', requireAuth, (req, res) => {
-  const db    = loadDB();
-  const trips = db.trips.filter(t => t.userId === req.session.userId);
-  res.json(trips.map(t => enrichTrip(t, db, req.session.userId)));
+app.get('/api/my-trips', requireAuth, async (req, res) => {
+  try {
+    const users = await col('users').find({}).toArray();
+    const trips = await col('trips').find({ userId: req.session.userId }).sort({ date: 1, time: 1 }).toArray();
+    res.json(trips.map(t => enrichTrip(t, users, req.session.userId)));
+  } catch { res.status(500).json({ error: 'Error interno' }); }
 });
 
-app.get('/api/my-bookings', requireAuth, (req, res) => {
-  const db    = loadDB();
-  const uid   = req.session.userId;
-  const trips = db.trips.filter(t => (t.bookings || []).some(b => b.userId === uid));
-  res.json(trips.map(t => enrichTrip(t, db, uid)));
+app.get('/api/my-bookings', requireAuth, async (req, res) => {
+  try {
+    const uid   = req.session.userId;
+    const users = await col('users').find({}).toArray();
+    const trips = await col('trips').find({ 'bookings.userId': uid }).sort({ date: 1, time: 1 }).toArray();
+    res.json(trips.map(t => enrichTrip(t, users, uid)));
+  } catch { res.status(500).json({ error: 'Error interno' }); }
 });
 
-app.post('/api/trips', requireAuth, (req, res) => {
-  const db = loadDB();
-  const { origin, originLat, originLng, destination, destinationLat, destinationLng, date, time, seats, notes } = req.body;
-  if (!origin || !destination || !date || !time || !seats)
-    return res.status(400).json({ error: 'Faltan campos obligatorios' });
-  const trip = {
-    id: uuidv4(), userId: req.session.userId,
-    origin, originLat: parseFloat(originLat), originLng: parseFloat(originLng),
-    destination, destinationLat: parseFloat(destinationLat), destinationLng: parseFloat(destinationLng),
-    date, time, seats: parseInt(seats, 10), notes: notes || '',
-    createdAt: new Date().toISOString(), bookings: []
-  };
-  db.trips.push(trip);
-  saveDB(db);
-  res.json(enrichTrip(trip, db, req.session.userId));
+app.post('/api/trips', requireAuth, async (req, res) => {
+  try {
+    const { origin, originLat, originLng, destination, destinationLat, destinationLng,
+            date, time, seats, notes, recurrence, recurrenceFrom, recurrenceTo, weekdays } = req.body;
+    if (!origin || !destination || !time || !seats)
+      return res.status(400).json({ error: 'Faltan campos obligatorios' });
+
+    const uid   = req.session.userId;
+    const users = await col('users').find({}).toArray();
+    const base  = {
+      userId: uid,
+      origin, originLat: parseFloat(originLat) || 0, originLng: parseFloat(originLng) || 0,
+      destination, destinationLat: parseFloat(destinationLat) || 0, destinationLng: parseFloat(destinationLng) || 0,
+      time, seats: parseInt(seats, 10), notes: notes || '',
+      createdAt: new Date().toISOString(), bookings: [],
+      recurrenceGroupId: null, recurrenceLabel: null
+    };
+
+    if (recurrence === 'weekly' && recurrenceFrom && recurrenceTo && Array.isArray(weekdays) && weekdays.length) {
+      const days  = weekdays.map(Number);
+      const dates = generateDates(recurrenceFrom, recurrenceTo, days);
+      if (!dates.length) return res.status(400).json({ error: 'No hay fechas en ese rango con los días seleccionados' });
+      if (dates.length > 90) return res.status(400).json({ error: 'Máximo 90 instancias por serie recurrente' });
+
+      const groupId  = uuidv4();
+      const DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+      const dayLabel  = days.sort((a, b) => (a === 0 ? 7 : a) - (b === 0 ? 7 : b)).map(d => DAY_NAMES[d]).join(', ');
+      const label     = `${dayLabel} · ${recurrenceFrom} – ${recurrenceTo}`;
+      const trips     = dates.map(d => ({ ...base, id: uuidv4(), date: d, recurrenceGroupId: groupId, recurrenceLabel: label }));
+
+      await col('trips').insertMany(trips);
+      res.json({ recurrent: true, count: trips.length, label, trips: trips.map(t => enrichTrip(t, users, uid)) });
+    } else {
+      if (!date) return res.status(400).json({ error: 'La fecha es obligatoria' });
+      const trip = { ...base, id: uuidv4(), date };
+      await col('trips').insertOne(trip);
+      res.json(enrichTrip(trip, users, uid));
+    }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
 });
 
-app.delete('/api/trips/:id', requireAuth, (req, res) => {
-  const db   = loadDB();
-  const trip = db.trips.find(t => t.id === req.params.id);
-  if (!trip) return res.status(404).json({ error: 'Viaje no encontrado' });
-  const user = db.users.find(u => u.id === req.session.userId);
-  if (trip.userId !== req.session.userId && user?.role !== 'admin')
-    return res.status(403).json({ error: 'Sin permisos' });
-  db.trips = db.trips.filter(t => t.id !== req.params.id);
-  saveDB(db);
-  res.json({ ok: true });
+app.delete('/api/trips/:id', requireAuth, async (req, res) => {
+  try {
+    const trip = await col('trips').findOne({ id: req.params.id });
+    if (!trip) return res.status(404).json({ error: 'Viaje no encontrado' });
+    const user = await col('users').findOne({ id: req.session.userId });
+    if (trip.userId !== req.session.userId && user?.role !== 'admin')
+      return res.status(403).json({ error: 'Sin permisos' });
+    await col('trips').deleteOne({ id: req.params.id });
+    res.json({ ok: true });
+  } catch { res.status(500).json({ error: 'Error interno' }); }
 });
 
 // ── Booking routes ────────────────────────────────────────────────────────────
 
 app.post('/api/trips/:id/bookings', requireAuth, async (req, res) => {
-  const db   = loadDB();
-  const trip = db.trips.find(t => t.id === req.params.id);
-  if (!trip) return res.status(404).json({ error: 'Viaje no encontrado' });
+  try {
+    const trip = await col('trips').findOne({ id: req.params.id });
+    if (!trip) return res.status(404).json({ error: 'Viaje no encontrado' });
+    if (trip.userId === req.session.userId) return res.status(400).json({ error: 'No puedes reservar tu propio viaje' });
+    const bookings = trip.bookings || [];
+    if (bookings.some(b => b.userId === req.session.userId)) return res.status(400).json({ error: 'Ya tienes una reserva en este viaje' });
+    if (bookings.length >= trip.seats) return res.status(400).json({ error: 'No quedan plazas disponibles' });
 
-  if (trip.userId === req.session.userId)
-    return res.status(400).json({ error: 'No puedes reservar tu propio viaje' });
+    const booking = { id: uuidv4(), userId: req.session.userId, bookedAt: new Date().toISOString() };
+    await col('trips').updateOne({ id: req.params.id }, { $push: { bookings: booking } });
 
-  const bookings = trip.bookings || [];
-  if (bookings.some(b => b.userId === req.session.userId))
-    return res.status(400).json({ error: 'Ya tienes una reserva en este viaje' });
-  if (bookings.length >= trip.seats)
-    return res.status(400).json({ error: 'No quedan plazas disponibles' });
-
-  const booking = { id: uuidv4(), userId: req.session.userId, bookedAt: new Date().toISOString() };
-  if (!trip.bookings) trip.bookings = [];
-  trip.bookings.push(booking);
-  saveDB(db);
-
-  const passenger = db.users.find(u => u.id === req.session.userId);
-  const owner     = db.users.find(u => u.id === trip.userId);
-
-  await sendEmail({
-    to:      owner?.email,
-    subject: `Nueva reserva en tu viaje — Comparte Ruta Granada`,
-    text:    `Hola ${owner?.alias},\n\n${passenger?.alias} ha reservado una plaza en tu viaje:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\nPlazas restantes: ${trip.seats - trip.bookings.length}\n\n— Comparte Ruta Granada`
-  });
-
-  res.json({ ...booking, userAlias: passenger?.alias || 'Usuario' });
+    const [passenger, owner] = await Promise.all([
+      col('users').findOne({ id: req.session.userId }),
+      col('users').findOne({ id: trip.userId })
+    ]);
+    await sendEmail({
+      to: owner?.email,
+      subject: 'Nueva reserva en tu viaje — Comparte Ruta Granada',
+      text: `Hola ${owner?.alias},\n\n${passenger?.alias} ha reservado una plaza en tu viaje:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\nPlazas restantes: ${trip.seats - bookings.length - 1}\n\n— Comparte Ruta Granada`
+    });
+    res.json({ ...booking, userAlias: passenger?.alias || 'Usuario' });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
 });
 
-// Trip owner cancels a passenger booking
 app.delete('/api/trips/:id/bookings/:bid', requireAuth, async (req, res) => {
-  const db   = loadDB();
-  const trip = db.trips.find(t => t.id === req.params.id);
-  if (!trip) return res.status(404).json({ error: 'Viaje no encontrado' });
-
-  const user = db.users.find(u => u.id === req.session.userId);
-  if (trip.userId !== req.session.userId && user?.role !== 'admin')
-    return res.status(403).json({ error: 'Solo el propietario del viaje puede cancelar reservas' });
-
-  const bIdx = (trip.bookings || []).findIndex(b => b.id === req.params.bid);
-  if (bIdx === -1) return res.status(404).json({ error: 'Reserva no encontrada' });
-
-  const booking   = trip.bookings[bIdx];
-  const passenger = db.users.find(u => u.id === booking.userId);
-  const owner     = db.users.find(u => u.id === trip.userId);
-  trip.bookings.splice(bIdx, 1);
-  saveDB(db);
-
-  await sendEmail({
-    to:      passenger?.email,
-    subject: `Tu reserva ha sido cancelada — Comparte Ruta Granada`,
-    text:    `Hola ${passenger?.alias},\n\nEl organizador (${owner?.alias}) ha cancelado tu reserva en el viaje:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\nSentimos los inconvenientes. Puedes buscar otros viajes disponibles en la plataforma.\n\n— Comparte Ruta Granada`
-  });
-
-  res.json({ ok: true });
+  try {
+    const trip = await col('trips').findOne({ id: req.params.id });
+    if (!trip) return res.status(404).json({ error: 'Viaje no encontrado' });
+    const user = await col('users').findOne({ id: req.session.userId });
+    if (trip.userId !== req.session.userId && user?.role !== 'admin')
+      return res.status(403).json({ error: 'Solo el propietario puede cancelar reservas' });
+    const booking = (trip.bookings || []).find(b => b.id === req.params.bid);
+    if (!booking) return res.status(404).json({ error: 'Reserva no encontrada' });
+    await col('trips').updateOne({ id: req.params.id }, { $pull: { bookings: { id: req.params.bid } } });
+    const [passenger, owner] = await Promise.all([
+      col('users').findOne({ id: booking.userId }),
+      col('users').findOne({ id: trip.userId })
+    ]);
+    await sendEmail({
+      to: passenger?.email,
+      subject: 'Tu reserva ha sido cancelada — Comparte Ruta Granada',
+      text: `Hola ${passenger?.alias},\n\nEl organizador (${owner?.alias}) ha cancelado tu reserva en:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\n— Comparte Ruta Granada`
+    });
+    res.json({ ok: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
 });
 
-// Passenger cancels own booking
 app.delete('/api/trips/:id/bookings/mine/cancel', requireAuth, async (req, res) => {
-  const db  = loadDB();
-  const trip = db.trips.find(t => t.id === req.params.id);
-  if (!trip) return res.status(404).json({ error: 'Viaje no encontrado' });
-
-  const bIdx = (trip.bookings || []).findIndex(b => b.userId === req.session.userId);
-  if (bIdx === -1) return res.status(404).json({ error: 'No tienes reserva en este viaje' });
-
-  const passenger = db.users.find(u => u.id === req.session.userId);
-  const owner     = db.users.find(u => u.id === trip.userId);
-  trip.bookings.splice(bIdx, 1);
-  saveDB(db);
-
-  await sendEmail({
-    to:      owner?.email,
-    subject: `Reserva cancelada en tu viaje — Comparte Ruta Granada`,
-    text:    `Hola ${owner?.alias},\n\n${passenger?.alias} ha cancelado su reserva en tu viaje:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\nAhora tienes ${trip.seats - trip.bookings.length} plaza(s) disponibles.\n\n— Comparte Ruta Granada`
-  });
-
-  res.json({ ok: true });
+  try {
+    const trip = await col('trips').findOne({ id: req.params.id });
+    if (!trip) return res.status(404).json({ error: 'Viaje no encontrado' });
+    const booking = (trip.bookings || []).find(b => b.userId === req.session.userId);
+    if (!booking) return res.status(404).json({ error: 'No tienes reserva en este viaje' });
+    await col('trips').updateOne({ id: req.params.id }, { $pull: { bookings: { userId: req.session.userId } } });
+    const [passenger, owner] = await Promise.all([
+      col('users').findOne({ id: req.session.userId }),
+      col('users').findOne({ id: trip.userId })
+    ]);
+    await sendEmail({
+      to: owner?.email,
+      subject: 'Reserva cancelada en tu viaje — Comparte Ruta Granada',
+      text: `Hola ${owner?.alias},\n\n${passenger?.alias} ha cancelado su reserva en:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\nAhora tienes ${trip.seats - trip.bookings.length + 1} plaza(s) disponibles.\n\n— Comparte Ruta Granada`
+    });
+    res.json({ ok: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
 });
 
-// ── Profile routes ────────────────────────────────────────────────────────────
+// ── Profile route ─────────────────────────────────────────────────────────────
 
 app.put('/api/profile', requireAuth, async (req, res) => {
-  const db  = loadDB();
-  const idx = db.users.findIndex(u => u.id === req.session.userId);
-  if (idx === -1) return res.status(404).json({ error: 'Usuario no encontrado' });
-  const { alias, password, email, municipio, codigoPostal, walkingDistanceKm } = req.body;
-  if (alias              !== undefined) db.users[idx].alias              = alias;
-  if (email              !== undefined) db.users[idx].email              = email;
-  if (municipio          !== undefined) db.users[idx].municipio          = municipio;
-  if (codigoPostal       !== undefined) db.users[idx].codigoPostal       = codigoPostal;
-  if (walkingDistanceKm  !== undefined) db.users[idx].walkingDistanceKm  = parseFloat(walkingDistanceKm);
-  if (password)                         db.users[idx].password           = await bcrypt.hash(password, 10);
-  saveDB(db);
-  res.json(safeUser(db.users[idx]));
+  try {
+    const { alias, password, email, municipio, codigoPostal, walkingDistanceKm } = req.body;
+    const update = {};
+    if (alias             !== undefined) update.alias             = alias;
+    if (email             !== undefined) update.email             = email;
+    if (municipio         !== undefined) update.municipio         = municipio;
+    if (codigoPostal      !== undefined) update.codigoPostal      = codigoPostal;
+    if (walkingDistanceKm !== undefined) update.walkingDistanceKm = parseFloat(walkingDistanceKm);
+    if (password)                        update.password          = await bcrypt.hash(password, 10);
+    const result = await col('users').findOneAndUpdate(
+      { id: req.session.userId }, { $set: update }, { returnDocument: 'after' }
+    );
+    if (!result) return res.status(404).json({ error: 'Usuario no encontrado' });
+    res.json(safeUser(result));
+  } catch { res.status(500).json({ error: 'Error interno' }); }
 });
 
 // ── Forum routes ──────────────────────────────────────────────────────────────
 
-app.get('/api/forum/threads', (req, res) => {
-  const db = loadDB();
-  const threads = db.forum.threads
-    .map(t => {
-      const u = db.users.find(u => u.id === t.userId);
-      return { id: t.id, title: t.title, content: t.content, userAlias: u?.alias || 'Usuario', createdAt: t.createdAt, replyCount: t.replies.length, isReport: !!t.isReport };
-    })
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  res.json(threads);
+app.get('/api/forum/threads', async (req, res) => {
+  try {
+    const users   = await col('users').find({}).toArray();
+    const threads = await col('threads').find({}).sort({ createdAt: -1 }).toArray();
+    res.json(threads.map(t => {
+      const u = users.find(u => u.id === t.userId);
+      return { id: t.id, title: t.title, content: t.content, userAlias: u?.alias || 'Usuario', createdAt: t.createdAt, replyCount: (t.replies || []).length, isReport: !!t.isReport };
+    }));
+  } catch { res.status(500).json({ error: 'Error interno' }); }
 });
 
-app.get('/api/forum/threads/:id', (req, res) => {
-  const db     = loadDB();
-  const thread = db.forum.threads.find(t => t.id === req.params.id);
-  if (!thread) return res.status(404).json({ error: 'Hilo no encontrado' });
-  const tu = db.users.find(u => u.id === thread.userId);
-  res.json({
-    ...thread,
-    userAlias: tu?.alias || 'Usuario',
-    replies: thread.replies.map(r => {
-      const ru = db.users.find(u => u.id === r.userId);
-      return { ...r, userAlias: ru?.alias || 'Usuario' };
-    })
-  });
+app.get('/api/forum/threads/:id', async (req, res) => {
+  try {
+    const thread = await col('threads').findOne({ id: req.params.id });
+    if (!thread) return res.status(404).json({ error: 'Hilo no encontrado' });
+    const users = await col('users').find({}).toArray();
+    const tu = users.find(u => u.id === thread.userId);
+    const { _id, ...threadData } = thread;
+    res.json({
+      ...threadData,
+      userAlias: tu?.alias || 'Usuario',
+      replies: (thread.replies || []).map(r => {
+        const ru = users.find(u => u.id === r.userId);
+        return { ...r, userAlias: ru?.alias || 'Usuario' };
+      })
+    });
+  } catch { res.status(500).json({ error: 'Error interno' }); }
 });
 
-app.post('/api/forum/threads', requireAuth, (req, res) => {
-  const db = loadDB();
-  const { title, content } = req.body;
-  if (!title || !content) return res.status(400).json({ error: 'Título y mensaje son obligatorios' });
-  const thread = { id: uuidv4(), userId: req.session.userId, title, content, createdAt: new Date().toISOString(), replies: [] };
-  db.forum.threads.push(thread);
-  saveDB(db);
-  const u = db.users.find(u => u.id === req.session.userId);
-  res.json({ ...thread, userAlias: u?.alias || 'Usuario', replyCount: 0 });
+app.post('/api/forum/threads', requireAuth, async (req, res) => {
+  try {
+    const { title, content } = req.body;
+    if (!title || !content) return res.status(400).json({ error: 'Título y mensaje son obligatorios' });
+    const thread = { id: uuidv4(), userId: req.session.userId, title, content, createdAt: new Date().toISOString(), replies: [], isReport: false };
+    await col('threads').insertOne(thread);
+    const u = await col('users').findOne({ id: req.session.userId });
+    res.json({ ...thread, userAlias: u?.alias || 'Usuario', replyCount: 0 });
+  } catch { res.status(500).json({ error: 'Error interno' }); }
 });
 
-app.post('/api/forum/threads/:id/replies', requireAuth, (req, res) => {
-  const db      = loadDB();
-  const tIdx    = db.forum.threads.findIndex(t => t.id === req.params.id);
-  if (tIdx === -1) return res.status(404).json({ error: 'Hilo no encontrado' });
-  const { content } = req.body;
-  if (!content?.trim()) return res.status(400).json({ error: 'El mensaje no puede estar vacío' });
-  const reply = { id: uuidv4(), userId: req.session.userId, content, createdAt: new Date().toISOString() };
-  db.forum.threads[tIdx].replies.push(reply);
-  saveDB(db);
-  const u = db.users.find(u => u.id === req.session.userId);
-  res.json({ ...reply, userAlias: u?.alias || 'Usuario' });
+app.post('/api/forum/threads/:id/replies', requireAuth, async (req, res) => {
+  try {
+    const { content } = req.body;
+    if (!content?.trim()) return res.status(400).json({ error: 'El mensaje no puede estar vacío' });
+    const thread = await col('threads').findOne({ id: req.params.id });
+    if (!thread) return res.status(404).json({ error: 'Hilo no encontrado' });
+    const reply = { id: uuidv4(), userId: req.session.userId, content, createdAt: new Date().toISOString() };
+    await col('threads').updateOne({ id: req.params.id }, { $push: { replies: reply } });
+    const u = await col('users').findOne({ id: req.session.userId });
+    res.json({ ...reply, userAlias: u?.alias || 'Usuario' });
+  } catch { res.status(500).json({ error: 'Error interno' }); }
 });
 
-app.delete('/api/forum/messages/:id', requireAuth, requireAdmin, (req, res) => {
-  const db = loadDB();
-  const tIdx = db.forum.threads.findIndex(t => t.id === req.params.id);
-  if (tIdx !== -1) { db.forum.threads.splice(tIdx, 1); saveDB(db); return res.json({ ok: true, type: 'thread' }); }
-  for (const thread of db.forum.threads) {
-    const rIdx = thread.replies.findIndex(r => r.id === req.params.id);
-    if (rIdx !== -1) { thread.replies.splice(rIdx, 1); saveDB(db); return res.json({ ok: true, type: 'reply' }); }
-  }
-  res.status(404).json({ error: 'Mensaje no encontrado' });
+app.delete('/api/forum/messages/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const asThread = await col('threads').findOne({ id: req.params.id });
+    if (asThread) { await col('threads').deleteOne({ id: req.params.id }); return res.json({ ok: true, type: 'thread' }); }
+    const result = await col('threads').updateOne({ 'replies.id': req.params.id }, { $pull: { replies: { id: req.params.id } } });
+    if (result.modifiedCount) return res.json({ ok: true, type: 'reply' });
+    res.status(404).json({ error: 'Mensaje no encontrado' });
+  } catch { res.status(500).json({ error: 'Error interno' }); }
 });
 
 // ── Reports route ─────────────────────────────────────────────────────────────
 
-app.post('/api/reports', requireAuth, (req, res) => {
-  const db = loadDB();
-  const { reportedUserId, message } = req.body;
-  if (!reportedUserId || !message?.trim())
-    return res.status(400).json({ error: 'Faltan datos del reporte' });
-  if (reportedUserId === req.session.userId)
-    return res.status(400).json({ error: 'No puedes reportarte a ti mismo' });
-
-  const reported = db.users.find(u => u.id === reportedUserId);
-  if (!reported) return res.status(404).json({ error: 'Usuario no encontrado' });
-
-  const reporter = db.users.find(u => u.id === req.session.userId);
-  reported.reportCount = (reported.reportCount || 0) + 1;
-
-  // Auto-publish public forum thread
-  const thread = {
-    id:              uuidv4(),
-    userId:          req.session.userId,
-    title:           `[REPORTE] Reporte contra el usuario "${reported.alias}"`,
-    content:         message,
-    isReport:        true,
-    reportedUserId,
-    createdAt:       new Date().toISOString(),
-    replies:         []
-  };
-  db.forum.threads.push(thread);
-
-  if (!db.reports) db.reports = [];
-  db.reports.push({
-    id:             uuidv4(),
-    reporterId:     req.session.userId,
-    reporterAlias:  reporter?.alias || 'Usuario',
-    reportedUserId,
-    reportedAlias:  reported.alias,
-    message,
-    threadId:       thread.id,
-    createdAt:      thread.createdAt
-  });
-
-  saveDB(db);
-  res.json({ ok: true, reportCount: reported.reportCount, threadId: thread.id });
+app.post('/api/reports', requireAuth, async (req, res) => {
+  try {
+    const { reportedUserId, message } = req.body;
+    if (!reportedUserId || !message?.trim()) return res.status(400).json({ error: 'Faltan datos del reporte' });
+    if (reportedUserId === req.session.userId) return res.status(400).json({ error: 'No puedes reportarte a ti mismo' });
+    const [reported, reporter] = await Promise.all([
+      col('users').findOne({ id: reportedUserId }),
+      col('users').findOne({ id: req.session.userId })
+    ]);
+    if (!reported) return res.status(404).json({ error: 'Usuario no encontrado' });
+    const newCount = (reported.reportCount || 0) + 1;
+    await col('users').updateOne({ id: reportedUserId }, { $set: { reportCount: newCount } });
+    const thread = { id: uuidv4(), userId: req.session.userId, title: `[REPORTE] Reporte contra el usuario "${reported.alias}"`, content: message, isReport: true, reportedUserId, createdAt: new Date().toISOString(), replies: [] };
+    await col('threads').insertOne(thread);
+    await col('reports').insertOne({ id: uuidv4(), reporterId: req.session.userId, reporterAlias: reporter?.alias || 'Usuario', reportedUserId, reportedAlias: reported.alias, message, threadId: thread.id, createdAt: thread.createdAt });
+    res.json({ ok: true, reportCount: newCount, threadId: thread.id });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
@@ -448,6 +486,6 @@ app.post('/api/reports', requireAuth, (req, res) => {
 initDB()
   .then(() => initTransporter())
   .then(() => {
-    app.listen(PORT, () => console.log(`Servidor v1.1 en http://localhost:${PORT}`));
+    app.listen(PORT, () => console.log(`Servidor v1.2 en http://localhost:${PORT}`));
   })
   .catch(err => { console.error('Error al arrancar:', err); process.exit(1); });
