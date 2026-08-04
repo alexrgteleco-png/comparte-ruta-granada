@@ -25,17 +25,21 @@ let transporter = null;
 async function initTransporter() {
   if (process.env.SMTP_HOST) {
     transporter = nodemailer.createTransport({
-      host:   process.env.SMTP_HOST,
-      port:   parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+      host:              process.env.SMTP_HOST,
+      port:              parseInt(process.env.SMTP_PORT || '587'),
+      secure:            process.env.SMTP_SECURE === 'true',
+      auth:              { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      connectionTimeout: 8000,
+      socketTimeout:     8000,
     });
     console.log(`[SMTP] Relay configurado: ${process.env.SMTP_HOST}:${process.env.SMTP_PORT || 587}`);
   } else {
     const acc = await nodemailer.createTestAccount();
     transporter = nodemailer.createTransport({
       host: 'smtp.ethereal.email', port: 587, secure: false,
-      auth: { user: acc.user, pass: acc.pass }
+      auth: { user: acc.user, pass: acc.pass },
+      connectionTimeout: 8000,
+      socketTimeout:     8000,
     });
     console.log(`[SMTP] Modo desarrollo — Ethereal Email`);
     console.log(`[SMTP] Bandeja de entrada: https://ethereal.email/messages`);

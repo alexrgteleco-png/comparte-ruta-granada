@@ -359,11 +359,11 @@ app.post('/api/trips/:id/bookings', requireAuth, async (req, res) => {
       col('users').findOne({ id: req.session.userId }),
       col('users').findOne({ id: trip.userId })
     ]);
-    await sendEmail({
+    sendEmail({
       to: owner?.email,
       subject: 'Nueva reserva en tu viaje — Comparte Ruta Granada',
       text: `Hola ${owner?.alias},\n\n${passenger?.alias} ha reservado una plaza en tu viaje:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\nPlazas restantes: ${trip.seats - bookings.length - 1}\n\n— Comparte Ruta Granada`
-    });
+    }).catch(err => console.error('[EMAIL booking]', err.message));
     res.json({ ...booking, userAlias: passenger?.alias || 'Usuario' });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
 });
@@ -382,11 +382,11 @@ app.delete('/api/trips/:id/bookings/:bid', requireAuth, async (req, res) => {
       col('users').findOne({ id: booking.userId }),
       col('users').findOne({ id: trip.userId })
     ]);
-    await sendEmail({
+    sendEmail({
       to: passenger?.email,
       subject: 'Tu reserva ha sido cancelada — Comparte Ruta Granada',
       text: `Hola ${passenger?.alias},\n\nEl organizador (${owner?.alias}) ha cancelado tu reserva en:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\n— Comparte Ruta Granada`
-    });
+    }).catch(err => console.error('[EMAIL cancel-by-owner]', err.message));
     res.json({ ok: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
 });
@@ -402,11 +402,11 @@ app.delete('/api/trips/:id/bookings/mine/cancel', requireAuth, async (req, res) 
       col('users').findOne({ id: req.session.userId }),
       col('users').findOne({ id: trip.userId })
     ]);
-    await sendEmail({
+    sendEmail({
       to: owner?.email,
       subject: 'Reserva cancelada en tu viaje — Comparte Ruta Granada',
       text: `Hola ${owner?.alias},\n\n${passenger?.alias} ha cancelado su reserva en:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\nAhora tienes ${trip.seats - trip.bookings.length + 1} plaza(s) disponibles.\n\n— Comparte Ruta Granada`
-    });
+    }).catch(err => console.error('[EMAIL cancel-by-passenger]', err.message));
     res.json({ ok: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
 });
