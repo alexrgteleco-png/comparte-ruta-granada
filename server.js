@@ -1,10 +1,13 @@
 'use strict';
 
-const express  = require('express');
-const session  = require('express-session');
-const bcrypt   = require('bcryptjs');
+const express    = require('express');
+const session    = require('express-session');
+const MongoStore = require('connect-mongo');
+const helmet     = require('helmet');
+const rateLimit  = require('express-rate-limit');
+const bcrypt     = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
-const path     = require('path');
+const path       = require('path');
 const { MongoClient } = require('mongodb');
 const { initTransporter, sendEmail } = require('./emailService');
 
@@ -34,18 +37,41 @@ function col(name) {
 // ── Express setup ─────────────────────────────────────────────────────────────
 
 app.set('trust proxy', 1);
-app.use(express.json());
+
+// ── Security headers ──────────────────────────────────────────────────────────
+app.use(helmet({
+  contentSecurityPolicy: false, // disabled: app uses external CDNs (Leaflet, OSM, Nominatim)
+  crossOriginEmbedderPolicy: false,
+}));
+
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiados intentos. Espera 15 minutos.' },
+});
+
+app.use(express.json({ limit: '50kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
   secret: process.env.SESSION_SECRET || 'comparte-ruta-granada-secret-2024',
   resave: false,
   saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGODB_URI,
+    dbName: 'carpooling',
+    collectionName: 'sessions',
+    ttl: 24 * 60 * 60,
+    autoRemove: 'native',
+  }),
   cookie: {
     maxAge:   24 * 60 * 60 * 1000,
     httpOnly: true,
     secure:   process.env.NODE_ENV === 'production',
-    sameSite: 'lax'
-  }
+    sameSite: 'lax',
+  },
 }));
 
 // ── Geo helpers ───────────────────────────────────────────────────────────────
@@ -159,7 +185,7 @@ function enrichTrip(t, users, sessionUserId) {
 
 // ── Auth routes ───────────────────────────────────────────────────────────────
 
-app.post('/api/register', async (req, res) => {
+app.post('/api/register', authLimiter, async (req, res) => {
   try {
     const { username, password, alias, email } = req.body;
     if (!username?.trim() || !password?.trim() || !alias?.trim())
@@ -190,11 +216,21 @@ app.post('/api/register', async (req, res) => {
     };
     await users.insertOne(user);
     req.session.userId = user.id;
+
+    // Welcome email (non-blocking)
+    if (user.email) {
+      sendEmail({
+        to: user.email,
+        subject: '¡Bienvenido a Comparte Ruta Granada!',
+        text: `Hola ${user.alias},\n\nTu cuenta ha sido creada correctamente.\n\nUsuario: ${user.username}\n\nYa puedes buscar y publicar viajes en la provincia de Granada.\n\n¡Buen viaje!\n\n— Comparte Ruta Granada`,
+      }).catch(err => console.error('[EMAIL bienvenida]', err.message));
+    }
+
     res.json(safeUser(user));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
 });
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Faltan credenciales' });
