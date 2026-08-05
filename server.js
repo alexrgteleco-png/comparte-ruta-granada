@@ -53,6 +53,22 @@ const authLimiter = rateLimit({
   message: { error: 'Demasiados intentos. Espera 15 minutos.' },
 });
 
+// ── Per-user action cooldown (trip create / booking) ─────────────────────────
+const ACTION_COOLDOWN_MS = 30_000;
+const MAX_TRIPS_PER_USER = 10;
+const MAX_BOOKINGS_PER_USER = 5;
+const userActionCooldown = new Map();
+
+function checkUserCooldown(userId) {
+  const last = userActionCooldown.get(userId);
+  if (!last) return 0;
+  const wait = Math.ceil((ACTION_COOLDOWN_MS - (Date.now() - last)) / 1000);
+  return wait > 0 ? wait : 0;
+}
+function setUserCooldown(userId) {
+  userActionCooldown.set(userId, Date.now());
+}
+
 app.use(express.json({ limit: '50kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
@@ -323,7 +339,16 @@ app.post('/api/trips', requireAuth, async (req, res) => {
     const todayStr   = new Date().toISOString().split('T')[0];
     const maxDateStr = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    const uid   = req.session.userId;
+    const uid = req.session.userId;
+
+    const cooldownWait = checkUserCooldown(uid);
+    if (cooldownWait > 0)
+      return res.status(429).json({ error: `Espera ${cooldownWait} segundo${cooldownWait !== 1 ? 's' : ''} antes de publicar otro viaje` });
+
+    const userTripCount = await col('trips').countDocuments({ userId: uid }, { maxTimeMS: 5000 });
+    if (userTripCount >= MAX_TRIPS_PER_USER)
+      return res.status(400).json({ error: `No puedes tener más de ${MAX_TRIPS_PER_USER} viajes publicados a la vez` });
+
     const users = await col('users').find({}).toArray();
     const base  = {
       userId: uid,
@@ -341,6 +366,8 @@ app.post('/api/trips', requireAuth, async (req, res) => {
       const dates = generateDates(recurrenceFrom, recurrenceTo, days);
       if (!dates.length) return res.status(400).json({ error: 'No hay fechas en ese rango con los días seleccionados' });
       if (dates.length > 90) return res.status(400).json({ error: 'Máximo 90 instancias por serie recurrente' });
+      if (userTripCount + dates.length > MAX_TRIPS_PER_USER)
+        return res.status(400).json({ error: `Esta serie crearía ${dates.length} viajes pero solo puedes añadir ${MAX_TRIPS_PER_USER - userTripCount} más (límite: ${MAX_TRIPS_PER_USER})` });
 
       const groupId  = uuidv4();
       const DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
@@ -348,6 +375,7 @@ app.post('/api/trips', requireAuth, async (req, res) => {
       const label     = `${dayLabel} · ${recurrenceFrom} – ${recurrenceTo}`;
       const trips     = dates.map(d => ({ ...base, id: uuidv4(), date: d, recurrenceGroupId: groupId, recurrenceLabel: label }));
 
+      setUserCooldown(uid);
       await col('trips').insertMany(trips);
       res.json({ recurrent: true, count: trips.length, label, trips: trips.map(t => enrichTrip(t, users, uid)) });
     } else {
@@ -355,6 +383,7 @@ app.post('/api/trips', requireAuth, async (req, res) => {
       if (date < todayStr || date > maxDateStr)
         return res.status(400).json({ error: 'La fecha debe estar entre hoy y los próximos 60 días' });
       const trip = { ...base, id: uuidv4(), date };
+      setUserCooldown(uid);
       await col('trips').insertOne(trip);
       res.json(enrichTrip(trip, users, uid));
     }
@@ -384,11 +413,22 @@ app.post('/api/trips/:id/bookings', requireAuth, async (req, res) => {
     if (bookings.some(b => b.userId === req.session.userId)) return res.status(400).json({ error: 'Ya tienes una reserva en este viaje' });
     if (bookings.length >= trip.seats) return res.status(400).json({ error: 'No quedan plazas disponibles' });
 
+    const uid = req.session.userId;
+
+    const cooldownWait = checkUserCooldown(uid);
+    if (cooldownWait > 0)
+      return res.status(429).json({ error: `Espera ${cooldownWait} segundo${cooldownWait !== 1 ? 's' : ''} antes de realizar otra reserva` });
+
+    const activeBookings = await col('trips').countDocuments({ 'bookings.userId': uid }, { maxTimeMS: 5000 });
+    if (activeBookings >= MAX_BOOKINGS_PER_USER)
+      return res.status(400).json({ error: `No puedes tener más de ${MAX_BOOKINGS_PER_USER} reservas activas a la vez` });
+
     const { comment } = req.body || {};
     if (comment && comment.trim().length > 255)
       return res.status(400).json({ error: 'El comentario no puede superar los 255 caracteres' });
-    const booking = { id: uuidv4(), userId: req.session.userId, bookedAt: new Date().toISOString(), comment: comment?.trim() || '' };
+    const booking = { id: uuidv4(), userId: uid, bookedAt: new Date().toISOString(), comment: comment?.trim() || '' };
 
+    setUserCooldown(uid);
     // Use $set on the full array to avoid any $push atomicity issues on Atlas M0
     const updatedBookings = [...bookings, booking];
     await col('trips').updateOne(
