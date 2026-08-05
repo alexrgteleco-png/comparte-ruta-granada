@@ -842,7 +842,7 @@ hr { border: none; }
 
 /* ── Booking comment ─────────────────────────────────────────────────────── */
 .booking-comment {
-  grid-column: 1 / -1;
+  flex: 0 0 100%;
   font-size: .8rem;
   color: var(--c-text-sec);
   font-style: italic;
@@ -851,4 +851,160 @@ hr { border: none; }
   background: var(--c-surface-alt);
   border-left: 3px solid var(--c-primary-light);
   border-radius: 0 4px 4px 0;
+}
+
+/* ── Passenger row restructure ───────────────────────────────────────────── */
+.passenger-row {
+  flex-wrap: wrap;
+}
+.passenger-main {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex: 1;
+  min-width: 0;
+}
+.passenger-actions {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex-shrink: 0;
+}
+.passenger-email {
+  font-size: .78rem;
+}
+
+/* ── Trip detail panel ───────────────────────────────────────────────────── */
+.trip-detail {
+  margin-top: .75rem;
+  padding: .85rem;
+  background: var(--c-primary-pale);
+  border: 1.5px solid var(--c-primary-light);
+  border-radius: var(--r);
+  animation: fadeIn .15s ease;
+}
+.trip-detail-inner { display: flex; flex-direction: column; gap: .55rem; }
+.trip-detail-row {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex-wrap: wrap;
+  font-size: .85rem;
+  color: var(--c-text-sec);
+}
+.trip-detail-label  { font-weight: 700; color: var(--c-primary-dark); white-space: nowrap; }
+.trip-detail-value  { color: var(--c-text); font-weight: 600; }
+.trip-detail-empty  { color: var(--c-text-muted); font-style: italic; }
+
+/* ── Passenger chips ─────────────────────────────────────────────────────── */
+.passengers-chips { display: flex; flex-wrap: wrap; gap: .3rem; }
+.passenger-chip {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border-dark);
+  border-radius: 20px;
+  padding: .15rem .55rem;
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--c-text-sec);
+}
+
+/* ── Contact email link ──────────────────────────────────────────────────── */
+.contact-email-link {
+  font-size: .82rem;
+  color: var(--c-primary);
+  text-decoration: underline;
+}
+.contact-email-link:hover { color: var(--c-primary-dark); }
+
+/* ── Trip messages (shared: sec1 detail + sec3 cards) ────────────────────── */
+.trip-messages-section {
+  margin-top: .65rem;
+  border-top: 1px solid var(--c-border);
+  padding-top: .65rem;
+}
+.trip-messages-title {
+  font-size: .82rem;
+  font-weight: 700;
+  color: var(--c-primary-dark);
+  margin-bottom: .45rem;
+}
+.trip-messages-list {
+  display: flex;
+  flex-direction: column;
+  gap: .3rem;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: .5rem;
+  padding-right: .2rem;
+}
+.trip-msg {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: .4rem;
+  align-items: baseline;
+  padding: .3rem .5rem;
+  background: var(--c-surface);
+  border-radius: var(--r);
+  font-size: .83rem;
+}
+.trip-msg-alias { font-weight: 700; color: var(--c-primary-dark); white-space: nowrap; }
+.trip-msg-text  { color: var(--c-text); word-break: break-word; }
+.trip-msg-time  { font-size: .72rem; color: var(--c-text-muted); white-space: nowrap; }
+.trip-msg-empty { font-size: .82rem; color: var(--c-text-muted); font-style: italic; padding: .2rem .4rem; }
+.trip-msg-form  { display: flex; gap: .5rem; align-items: flex-start; }
+.trip-msg-input {
+  flex: 1;
+  padding: .4rem .6rem;
+  border: 1.5px solid var(--c-border);
+  border-radius: var(--r);
+  font-size: .83rem;
+  resize: none;
+  font-family: inherit;
+  background: var(--c-surface);
+  color: var(--c-text);
+  min-width: 0;
+}
+.trip-msg-input:focus { outline: none; border-color: var(--c-primary-light); box-shadow: 0 0 0 3px rgba(44,95,46,.1); }
+
+/* ── Booking details in Mis Reservas ─────────────────────────────────────── */
+.booking-details {
+  margin-top: .65rem;
+  padding: .7rem .85rem;
+  background: var(--c-surface-alt);
+  border-radius: var(--r);
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+}
+.booking-info-row {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex-wrap: wrap;
+  font-size: .85rem;
+  color: var(--c-text-sec);
+}
+.booking-info-label  { font-weight: 700; color: var(--c-text-sec); white-space: nowrap; }
+.booking-driver      { font-weight: 600; color: var(--c-primary-dark); }
+.booking-notes       { color: var(--c-text-muted); font-style: italic; }
+.booking-my-comment  {
+  color: var(--c-text-muted);
+  font-style: italic;
+  border-left: 3px solid var(--c-primary-light);
+  padding-left: .5rem;
+}
+.no-email { color: var(--c-text-muted); font-size: .8rem; }
+
+/* ── Danger zone (delete account) ────────────────────────────────────────── */
+.danger-zone {
+  padding: 1rem;
+  background: #FFF5F5;
+  border: 1.5px solid #F5C6C3;
+  border-radius: var(--r);
+}
+.danger-title { color: var(--c-error) !important; }
+.danger-desc  {
+  font-size: .85rem;
+  color: var(--c-text-muted);
+  margin: .25rem 0 .75rem;
 }

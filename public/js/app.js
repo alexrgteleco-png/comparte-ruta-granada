@@ -275,9 +275,80 @@ async function searchTrips() {
   }
 }
 
+function buildMessagesHtml(tripId, messages) {
+  const msgItems = messages.length
+    ? messages.map(m => `
+        <div class="trip-msg">
+          <span class="trip-msg-alias">${esc(m.userAlias)}:</span>
+          <span class="trip-msg-text">${esc(m.text)}</span>
+          <span class="trip-msg-time">${esc(fmtDT(m.createdAt))}</span>
+        </div>`).join('')
+    : '<p class="trip-msg-empty">Sin mensajes todavía. Sé el primero en escribir.</p>';
+  return `
+    <div class="trip-messages-section">
+      <div class="trip-messages-title">Conversación del viaje</div>
+      <div class="trip-messages-list" id="trip-msgs-${esc(tripId)}">${msgItems}</div>
+      <div class="trip-msg-form">
+        <textarea class="trip-msg-input" id="trip-msg-input-${esc(tripId)}" rows="2" placeholder="Escribe un mensaje para todos los participantes..."></textarea>
+        <button class="btn btn-primary btn-sm trip-msg-send-btn" data-trip-id="${esc(tripId)}">Enviar</button>
+      </div>
+    </div>`;
+}
+
+function bindMsgEvents(container) {
+  container.querySelectorAll('.trip-msg-send-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const tripId = btn.dataset.tripId;
+      const input  = document.getElementById(`trip-msg-input-${tripId}`);
+      const text   = input?.value?.trim();
+      if (!text) return;
+      btn.disabled = true; btn.textContent = 'Enviando...';
+      try {
+        const msg  = await apiPost(`/api/trips/${tripId}/messages`, { text });
+        const list = document.getElementById(`trip-msgs-${tripId}`);
+        if (list) {
+          list.querySelector('.trip-msg-empty')?.remove();
+          const div = document.createElement('div');
+          div.className = 'trip-msg';
+          div.innerHTML = `<span class="trip-msg-alias">${esc(msg.userAlias)}:</span><span class="trip-msg-text">${esc(msg.text)}</span><span class="trip-msg-time">${esc(fmtDT(msg.createdAt))}</span>`;
+          list.appendChild(div);
+          list.scrollTop = list.scrollHeight;
+        }
+        const idx = state.searchResults.findIndex(tr => tr.id === tripId);
+        if (idx !== -1) state.searchResults[idx].messages = [...(state.searchResults[idx].messages || []), msg];
+        if (input) input.value = '';
+      } catch (err) { alert(err.message); }
+      btn.disabled = false; btn.textContent = 'Enviar';
+    });
+  });
+}
+
+function buildTripDetail(t) {
+  const isParticipant = t.isOwn || !!t.myBooking;
+  const passengers = t.bookings || [];
+  const chips = passengers.map(b => `<span class="passenger-chip">${esc(b.userAlias)}</span>`).join('');
+  const passLine = passengers.length
+    ? `<span class="trip-detail-label">Pasajeros (${passengers.length}/${t.seats}):</span><span class="passengers-chips">${chips}</span>`
+    : `<span class="trip-detail-label">Pasajeros:</span><span class="trip-detail-empty">Sin reservas todavía.</span>`;
+  const contactLine = !t.isOwn && t.ownerEmail
+    ? `<a href="mailto:${esc(t.ownerEmail)}" class="contact-email-link">✉ Escribir al conductor (${esc(t.ownerEmail)})</a>`
+    : '';
+  const msgsHtml = isParticipant ? buildMessagesHtml(t.id, t.messages || []) : '';
+  return `
+    <div class="trip-detail hidden" id="trip-detail-${esc(t.id)}">
+      <div class="trip-detail-inner">
+        <div class="trip-detail-row"><span class="trip-detail-label">Conductor:</span><span class="trip-detail-value">${esc(t.userAlias)}</span>${contactLine}</div>
+        <div class="trip-detail-row">${passLine}</div>
+        ${msgsHtml}
+      </div>
+    </div>`;
+}
+
 function renderSearchResults(trips) {
   const el = document.getElementById('s1-results');
   if (!trips.length) { el.innerHTML = '<p class="no-results">No se encontraron viajes con esos criterios.</p>'; return; }
+  const isAdmin = state.user?.role === 'admin';
 
   el.innerHTML = trips.map(t => {
     const avail = t.availableSeats ?? (t.seats - (t.bookings?.length || 0));
@@ -293,6 +364,7 @@ function renderSearchResults(trips) {
     let actionBtns = '';
     if (!isOwn && !booked && avail > 0) actionBtns += `<button class="btn btn-primary btn-sm book-toggle-btn" data-trip-id="${esc(t.id)}">Reservar plaza</button>`;
     if (!isOwn && booked)               actionBtns += `<button class="btn btn-outline btn-sm cancel-mine-btn" data-trip-id="${esc(t.id)}">Cancelar mi reserva</button>`;
+    if (isAdmin && !isOwn)              actionBtns += `<button class="btn btn-danger btn-sm admin-delete-trip-btn" data-trip-id="${esc(t.id)}">Borrar (admin)</button>`;
 
     let reportBtn = '';
     if (!isOwn) reportBtn = `<button class="btn-report-link report-toggle-btn" data-trip-id="${esc(t.id)}" data-user-id="${esc(t.userId)}">Reportar usuario</button>`;
@@ -311,6 +383,7 @@ function renderSearchResults(trips) {
           <div class="trip-actions">${badges}${actionBtns}</div>
           ${reportBtn}
         </div>
+        ${buildTripDetail(t)}
         <div class="report-inline hidden" id="book-inline-${esc(t.id)}">
           <p>Mensaje opcional para el conductor (se incluirá en el email de notificación):</p>
           <textarea rows="2" placeholder="Ej: Puedo salir 5 minutos antes si hace falta..." id="book-comment-${esc(t.id)}" maxlength="300"></textarea>
@@ -330,10 +403,10 @@ function renderSearchResults(trips) {
       </div>`;
   }).join('');
 
-  // Map click to select trip
+  // Map click to select trip (also toggles detail panel)
   el.querySelectorAll('.trip-card').forEach((card, i) => {
     card.addEventListener('click', e => {
-      if (e.target.closest('.trip-card-footer') || e.target.closest('.report-inline')) return;
+      if (e.target.closest('.trip-card-footer') || e.target.closest('.report-inline') || e.target.closest('.trip-detail')) return;
       selectTrip(card, trips[i]);
     });
   });
@@ -361,7 +434,6 @@ function renderSearchResults(trips) {
       btn.textContent = 'Reservando...';
       try {
         const booking = await apiPost(`/api/trips/${tripId}/bookings`, { comment });
-        // Live update: patch state and re-render just this card
         const idx = state.searchResults.findIndex(t => t.id === tripId);
         if (idx !== -1) {
           const t = state.searchResults[idx];
@@ -394,7 +466,6 @@ function renderSearchResults(trips) {
       btn.disabled = true;
       try {
         await apiDelete(`/api/trips/${tripId}/bookings/mine/cancel`);
-        // Live update
         const idx = state.searchResults.findIndex(t => t.id === tripId);
         if (idx !== -1) {
           const t = state.searchResults[idx];
@@ -406,6 +477,22 @@ function renderSearchResults(trips) {
         } else {
           await searchTrips();
         }
+      } catch (err) { alert(err.message); btn.disabled = false; }
+    });
+  });
+
+  // Admin delete trip
+  el.querySelectorAll('.admin-delete-trip-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      if (!confirm('¿Borrar este viaje como administrador?')) return;
+      btn.disabled = true;
+      const tripId = btn.dataset.tripId;
+      try {
+        await apiDelete(`/api/trips/${tripId}`);
+        state.searchResults = state.searchResults.filter(t => t.id !== tripId);
+        const card = btn.closest('.trip-card');
+        if (card) { card.style.transition = 'opacity .3s'; card.style.opacity = '0'; setTimeout(() => card.remove(), 300); }
       } catch (err) { alert(err.message); btn.disabled = false; }
     });
   });
@@ -443,6 +530,8 @@ function renderSearchResults(trips) {
       } catch (err) { alert(err.message); btn.disabled = false; }
     });
   });
+
+  bindMsgEvents(el);
 }
 
 function rerenderTripCard(tripId, t) {
@@ -453,8 +542,8 @@ function rerenderTripCard(tripId, t) {
   const isOwn  = !!t.isOwn;
   const booked = !!t.myBooking;
   const full   = avail <= 0 && !booked;
+  const isAdmin = state.user?.role === 'admin';
 
-  // Update badges
   let badges = '';
   if (isOwn)   badges += `<span class="badge badge-own">Tu viaje</span>`;
   if (booked)  badges += `<span class="badge badge-booked">Reservado</span>`;
@@ -463,6 +552,7 @@ function rerenderTripCard(tripId, t) {
   let actionBtns = '';
   if (!isOwn && !booked && avail > 0) actionBtns += `<button class="btn btn-primary btn-sm book-toggle-btn" data-trip-id="${esc(t.id)}">Reservar plaza</button>`;
   if (!isOwn && booked)               actionBtns += `<button class="btn btn-outline btn-sm cancel-mine-btn" data-trip-id="${esc(t.id)}">Cancelar mi reserva</button>`;
+  if (isAdmin && !isOwn)              actionBtns += `<button class="btn btn-danger btn-sm admin-delete-trip-btn" data-trip-id="${esc(t.id)}">Borrar (admin)</button>`;
 
   const tripActionsEl = card.querySelector('.trip-actions');
   if (tripActionsEl) tripActionsEl.innerHTML = badges + actionBtns;
@@ -473,11 +563,17 @@ function rerenderTripCard(tripId, t) {
     if (spans[3]) spans[3].textContent = `🚗 ${avail} plaza${avail !== 1 ? 's' : ''} libre${avail !== 1 ? 's' : ''}`;
   }
 
-  // Hide booking inline form (if visible) and re-bind events
-  const bookForm = card.querySelector(`#book-inline-${tripId}`);
-  if (bookForm) bookForm.classList.add('hidden');
+  // Update detail panel passenger list
+  const detailEl = card.querySelector('.trip-detail');
+  if (detailEl) {
+    const wasVisible = !detailEl.classList.contains('hidden');
+    detailEl.outerHTML = buildTripDetail(t);
+    if (wasVisible) card.querySelector('.trip-detail')?.classList.remove('hidden');
+  }
 
-  // Re-bind the new buttons (replace old ones with fresh listeners)
+  // Hide booking inline form and re-bind events
+  card.querySelector(`#book-inline-${tripId}`)?.classList.add('hidden');
+
   card.querySelectorAll('.book-toggle-btn').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
@@ -504,6 +600,22 @@ function rerenderTripCard(tripId, t) {
       } catch (err) { alert(err.message); btn.disabled = false; }
     });
   });
+  card.querySelectorAll('.admin-delete-trip-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      if (!confirm('¿Borrar este viaje como administrador?')) return;
+      btn.disabled = true;
+      const tid = btn.dataset.tripId;
+      try {
+        await apiDelete(`/api/trips/${tid}`);
+        state.searchResults = state.searchResults.filter(tr => tr.id !== tid);
+        const c = btn.closest('.trip-card');
+        if (c) { c.style.transition = 'opacity .3s'; c.style.opacity = '0'; setTimeout(() => c.remove(), 300); }
+      } catch (err) { alert(err.message); btn.disabled = false; }
+    });
+  });
+
+  bindMsgEvents(card);
 }
 
 function showTripsOnMap(trips) {
@@ -522,13 +634,28 @@ function showTripsOnMap(trips) {
 }
 
 async function selectTrip(cardEl, trip) {
-  document.querySelectorAll('.trip-card').forEach(c => c.classList.remove('selected'));
+  const alreadySelected = cardEl.classList.contains('selected');
+
+  // Collapse all detail panels and deselect all cards
+  document.querySelectorAll('#s1-results .trip-detail').forEach(d => d.classList.add('hidden'));
+  document.querySelectorAll('#s1-results .trip-card').forEach(c => c.classList.remove('selected'));
+
+  if (alreadySelected) {
+    // Clicking selected card: deselect, restore all markers
+    state.searchRoute   = clearLayer(state.searchMap, state.searchRoute);
+    state.searchMarkers = clearLayer(state.searchMap, state.searchMarkers);
+    if (state.searchResults.length) showTripsOnMap(state.searchResults);
+    return;
+  }
+
   cardEl.classList.add('selected');
+  document.getElementById(`trip-detail-${trip.id}`)?.classList.remove('hidden');
+
   if (!state.searchMap) return;
   state.searchRoute   = clearLayer(state.searchMap, state.searchRoute);
   state.searchMarkers = clearLayer(state.searchMap, state.searchMarkers);
   const group = L.layerGroup().addTo(state.searchMap);
-  L.marker([trip.originLat, trip.originLng],      { icon: dotIcon('#2C5F2E') }).bindPopup(`<b>Origen:</b> ${esc(trip.origin)}`).addTo(group).openPopup();
+  L.marker([trip.originLat, trip.originLng],           { icon: dotIcon('#2C5F2E') }).bindPopup(`<b>Origen:</b> ${esc(trip.origin)}`).addTo(group).openPopup();
   L.marker([trip.destinationLat, trip.destinationLng], { icon: dotIcon('#7A5C1E') }).bindPopup(`<b>Destino:</b> ${esc(trip.destination)}`).addTo(group);
   state.searchMarkers = group;
   state.searchRoute   = await drawRoute(state.searchMap, trip.originLat, trip.originLng, trip.destinationLat, trip.destinationLng);
@@ -680,9 +807,14 @@ async function loadMyTrips() {
       const passengerRows = passengers.length
         ? passengers.map(b => `
             <div class="passenger-row">
-              <span class="passenger-name">${esc(b.userAlias)}</span>
-              <span style="font-size:.78rem;color:var(--c-text-muted)">${esc(fmtDT(b.bookedAt))}</span>
-              <button class="btn btn-danger btn-sm cancel-booking-btn" data-trip-id="${esc(t.id)}" data-booking-id="${esc(b.id)}">Cancelar</button>
+              <div class="passenger-main">
+                <span class="passenger-name">${esc(b.userAlias)}</span>
+                ${b.userEmail ? `<a href="mailto:${esc(b.userEmail)}" class="contact-email-link passenger-email">✉ ${esc(b.userEmail)}</a>` : ''}
+              </div>
+              <div class="passenger-actions">
+                <span style="font-size:.78rem;color:var(--c-text-muted)">${esc(fmtDT(b.bookedAt))}</span>
+                <button class="btn btn-danger btn-sm cancel-booking-btn" data-trip-id="${esc(t.id)}" data-booking-id="${esc(b.id)}">Cancelar</button>
+              </div>
               ${b.comment ? `<div class="booking-comment">&#128172; ${esc(b.comment)}</div>` : ''}
             </div>`).join('')
         : '<p class="no-passengers">Sin reservas todavía.</p>';
@@ -700,9 +832,11 @@ async function loadMyTrips() {
             <button class="btn btn-danger btn-sm delete-trip-btn" data-trip-id="${esc(t.id)}" title="Borrar viaje">Borrar viaje</button>
           </div>
           <div class="passengers-list">${passengerRows}</div>
+          ${buildMessagesHtml(t.id, t.messages || [])}
         </div>`;
     }).join('');
 
+    bindMsgEvents(el);
     el.querySelectorAll('.cancel-booking-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!confirm('¿Cancelar esta reserva? Se notificará al pasajero por email.')) return;
@@ -745,17 +879,45 @@ async function loadMyBookings() {
   try {
     const trips = await apiGet('/api/my-bookings');
     if (!trips.length) { el.innerHTML = '<p class="no-results">No tienes ninguna reserva activa.</p>'; return; }
-    el.innerHTML = trips.map(t => `
-      <div class="my-trip-card">
-        <div class="my-trip-header">
-          <div>
-            <div class="my-trip-route">${esc(t.origin)}<span class="arrow">&#10132;</span>${esc(t.destination)}</div>
-            <div class="my-trip-meta">&#128197; ${esc(fmtDate(t.date))} · &#128336; ${esc(t.time)} · Conductor: ${esc(t.userAlias)}</div>
+    el.innerHTML = trips.map(t => {
+      const myBooking    = t.myBooking;
+      const coPassengers = (t.bookings || []).filter(b => b.id !== myBooking?.id);
+      const driverContact = t.ownerEmail
+        ? `<a href="mailto:${esc(t.ownerEmail)}" class="contact-email-link">✉ ${esc(t.ownerEmail)}</a>`
+        : '<span class="no-email">Sin email de contacto</span>';
+      const coPassHTML = coPassengers.length
+        ? `<div class="booking-info-row"><span class="booking-info-label">Compañeros de viaje:</span><span class="passengers-chips">${coPassengers.map(b => `<span class="passenger-chip">${esc(b.userAlias)}</span>`).join('')}</span></div>`
+        : '';
+      const notesHTML = t.notes
+        ? `<div class="booking-info-row booking-notes"><span class="booking-info-label">Notas del conductor:</span> ${esc(t.notes)}</div>`
+        : '';
+      const myCommentHTML = myBooking?.comment
+        ? `<div class="booking-info-row booking-my-comment"><span class="booking-info-label">Tu mensaje al conductor:</span> "${esc(myBooking.comment)}"</div>`
+        : '';
+      return `
+        <div class="my-trip-card">
+          <div class="my-trip-header">
+            <div>
+              <div class="my-trip-route">${esc(t.origin)}<span class="arrow">&#10132;</span>${esc(t.destination)}</div>
+              <div class="my-trip-meta">&#128197; ${esc(fmtDate(t.date))} · &#128336; ${esc(t.time)} · ${t.availableSeats ?? 0} plaza(s) libre(s)</div>
+            </div>
+            <button class="btn btn-outline btn-sm cancel-mine-btn2" data-trip-id="${esc(t.id)}">Cancelar reserva</button>
           </div>
-          <button class="btn btn-outline btn-sm cancel-mine-btn2" data-trip-id="${esc(t.id)}">Cancelar reserva</button>
-        </div>
-      </div>`).join('');
+          <div class="booking-details">
+            <div class="booking-info-row">
+              <span class="booking-info-label">Conductor:</span>
+              <span class="booking-driver">${esc(t.userAlias)}</span>
+              ${driverContact}
+            </div>
+            ${coPassHTML}
+            ${notesHTML}
+            ${myCommentHTML}
+          </div>
+          ${buildMessagesHtml(t.id, t.messages || [])}
+        </div>`;
+    }).join('');
 
+    bindMsgEvents(el);
     el.querySelectorAll('.cancel-mine-btn2').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!confirm('¿Cancelar tu reserva en este viaje?')) return;
@@ -929,6 +1091,17 @@ function bindEvents() {
 
   // SEC3
   document.getElementById('profile-form').addEventListener('submit', saveProfile);
+
+  // Delete account
+  document.getElementById('delete-account-btn')?.addEventListener('click', async () => {
+    if (!confirm('¿Seguro que quieres eliminar tu cuenta?\n\nEsta acción es IRREVERSIBLE. Se eliminarán todos tus viajes y reservas.')) return;
+    if (!confirm('Confirma de nuevo: ¿Eliminar cuenta permanentemente?')) return;
+    try {
+      await apiDelete('/api/users/me');
+      state.user = null; state.searchMap = null; state.publishMap = null;
+      showLogin();
+    } catch (err) { alert('Error al eliminar la cuenta: ' + err.message); }
+  });
 
   // SEC4
   document.getElementById('new-thread-btn').addEventListener('click', () => { hide('forum-list-view'); show('forum-new-thread'); hide('forum-thread-view'); });

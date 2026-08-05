@@ -166,19 +166,33 @@ function safeUser(u) {
 }
 
 function enrichTrip(t, users, sessionUserId) {
-  const owner    = users.find(u => u.id === t.userId);
+  const owner   = users.find(u => u.id === t.userId);
+  const isOwner = t.userId === sessionUserId;
+  const myBooking = (t.bookings || []).find(b => b.userId === sessionUserId) || null;
+  const isParticipant = isOwner || !!myBooking;
   const bookings = (t.bookings || []).map(b => {
     const bu = users.find(u => u.id === b.userId);
-    return { ...b, userAlias: bu?.alias || 'Usuario' };
+    return {
+      ...b,
+      userAlias: bu?.alias || 'Usuario',
+      userEmail: isOwner ? (bu?.email || '') : '',
+    };
   });
-  const myBooking = (t.bookings || []).find(b => b.userId === sessionUserId) || null;
+  const messages = isParticipant
+    ? (t.messages || []).map(m => {
+        const mu = users.find(u => u.id === m.userId);
+        return { ...m, userAlias: mu?.alias || 'Usuario' };
+      })
+    : [];
   const { _id, ...tripData } = t;
   return {
     ...tripData,
     userAlias:      owner?.alias || 'Usuario',
+    ownerEmail:     sessionUserId ? (owner?.email || '') : '',
     bookings,
+    messages,
     myBooking,
-    isOwn:          t.userId === sessionUserId,
+    isOwn:          isOwner,
     availableSeats: t.seats - (t.bookings || []).length
   };
 }
@@ -419,6 +433,43 @@ app.delete('/api/trips/:id/bookings/mine/cancel', requireAuth, async (req, res) 
       text: `Hola ${owner?.alias},\n\n${passenger?.alias} ha cancelado su reserva en:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\nAhora tienes ${remaining2.length > trip.seats - 1 ? 0 : trip.seats - remaining2.length} plaza(s) disponibles.\n\n— Comparte Ruta Granada`
     }).catch(err => console.error('[EMAIL cancel-by-passenger]', err.message));
     res.json({ ok: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
+});
+
+// ── Trip messages ─────────────────────────────────────────────────────────────
+
+app.post('/api/trips/:id/messages', requireAuth, async (req, res) => {
+  try {
+    const trip = await col('trips').findOne({ id: req.params.id });
+    if (!trip) return res.status(404).json({ error: 'Viaje no encontrado' });
+    const uid = req.session.userId;
+    const isOwner     = trip.userId === uid;
+    const isPassenger = (trip.bookings || []).some(b => b.userId === uid);
+    if (!isOwner && !isPassenger)
+      return res.status(403).json({ error: 'Solo el conductor y los pasajeros pueden comentar' });
+    const { text } = req.body;
+    if (!text?.trim()) return res.status(400).json({ error: 'El mensaje no puede estar vacío' });
+    const message = { id: uuidv4(), userId: uid, text: text.trim(), createdAt: new Date().toISOString() };
+    const updatedMessages = [...(trip.messages || []), message];
+    await col('trips').updateOne({ id: req.params.id }, { $set: { messages: updatedMessages } }, { maxTimeMS: 10000 });
+    const user = await col('users').findOne({ id: uid }, { maxTimeMS: 5000 });
+    res.json({ ...message, userAlias: user?.alias || 'Usuario' });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
+});
+
+// ── Delete account ────────────────────────────────────────────────────────────
+
+app.delete('/api/users/me', requireAuth, async (req, res) => {
+  try {
+    const uid = req.session.userId;
+    const bookedTrips = await col('trips').find({ 'bookings.userId': uid }).toArray();
+    for (const trip of bookedTrips) {
+      const remaining = (trip.bookings || []).filter(b => b.userId !== uid);
+      await col('trips').updateOne({ id: trip.id }, { $set: { bookings: remaining } }, { maxTimeMS: 8000 });
+    }
+    await col('trips').deleteMany({ userId: uid });
+    await col('users').deleteOne({ id: uid });
+    req.session.destroy(() => res.json({ ok: true }));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
 });
 
