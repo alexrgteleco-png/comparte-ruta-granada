@@ -469,6 +469,7 @@ app.delete('/api/users/me', requireAuth, async (req, res) => {
     }
     await col('trips').deleteMany({ userId: uid });
     await col('users').deleteOne({ id: uid });
+    await col('counters').updateOne({ id: 'deletedUsers' }, { $inc: { count: 1 } }, { upsert: true });
     req.session.destroy(() => res.json({ ok: true }));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
 });
@@ -576,6 +577,48 @@ app.post('/api/reports', requireAuth, async (req, res) => {
     await col('threads').insertOne(thread);
     await col('reports').insertOne({ id: uuidv4(), reporterId: req.session.userId, reporterAlias: reporter?.alias || 'Usuario', reportedUserId, reportedAlias: reported.alias, message, threadId: thread.id, createdAt: thread.createdAt });
     res.json({ ok: true, reportCount: newCount, threadId: thread.id });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
+});
+
+// ── Admin stats ───────────────────────────────────────────────────────────────
+
+app.get('/api/admin/stats', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    const [totalUsers, newUsersWeek, deletedCounter, allTrips, allThreads] = await Promise.all([
+      col('users').countDocuments(),
+      col('users').countDocuments({ createdAt: { $gte: weekAgo } }),
+      col('counters').findOne({ id: 'deletedUsers' }),
+      col('trips').find({}, { projection: { bookings: 1, messages: 1, createdAt: 1 } }).toArray(),
+      col('threads').find({}, { projection: { replies: 1, createdAt: 1, isReport: 1 } }).toArray(),
+    ]);
+
+    const totalTrips     = allTrips.length;
+    const newTripsWeek   = allTrips.filter(t => (t.createdAt || '') >= weekAgo).length;
+
+    const allBookings      = allTrips.flatMap(t => t.bookings || []);
+    const totalBookings    = allBookings.length;
+    const newBookingsWeek  = allBookings.filter(b => (b.bookedAt || '') >= weekAgo).length;
+
+    const allTripMsgs       = allTrips.flatMap(t => t.messages || []);
+    const totalTripMsgs     = allTripMsgs.length;
+    const newTripMsgsWeek   = allTripMsgs.filter(m => (m.createdAt || '') >= weekAgo).length;
+
+    const forumThreads      = allThreads.filter(t => !t.isReport);
+    const totalThreads      = forumThreads.length;
+    const newThreadsWeek    = forumThreads.filter(t => (t.createdAt || '') >= weekAgo).length;
+    const allReplies        = forumThreads.flatMap(t => t.replies || []);
+    const totalReplies      = allReplies.length;
+    const newRepliesWeek    = allReplies.filter(r => (r.createdAt || '') >= weekAgo).length;
+
+    res.json({
+      users:         { total: totalUsers, newThisWeek: newUsersWeek, deleted: deletedCounter?.count || 0 },
+      trips:         { total: totalTrips, newThisWeek: newTripsWeek },
+      bookings:      { total: totalBookings, newThisWeek: newBookingsWeek },
+      forum:         { threads: totalThreads, newThreadsThisWeek: newThreadsWeek, replies: totalReplies, newRepliesThisWeek: newRepliesWeek },
+      conversations: { totalMessages: totalTripMsgs, newThisWeek: newTripMsgsWeek },
+    });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
 });
 

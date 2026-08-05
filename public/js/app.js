@@ -208,6 +208,8 @@ function showLogin() {
 function showApp() {
   hide('login-screen'); show('app');
   document.getElementById('nav-alias').textContent = state.user.alias;
+  const adminItem = document.getElementById('admin-nav-item');
+  if (adminItem) adminItem.classList.toggle('hidden', state.user?.role !== 'admin');
   showSection('sec1');
 }
 
@@ -224,6 +226,7 @@ function showSection(id) {
   if (id === 'sec2' && !state.publishMap) { setTimeout(() => { state.publishMap = createMap('map-publish'); setupPublishAutocomplete(); }, 50); }
   if (id === 'sec3') loadProfile();
   if (id === 'sec4') loadForumThreads();
+  if (id === 'sec6') loadAdminStats();
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -299,14 +302,15 @@ function bindMsgEvents(container) {
   container.querySelectorAll('.trip-msg-send-btn').forEach(btn => {
     btn.addEventListener('click', async e => {
       e.stopPropagation();
-      const tripId = btn.dataset.tripId;
-      const input  = document.getElementById(`trip-msg-input-${tripId}`);
-      const text   = input?.value?.trim();
+      const tripId  = btn.dataset.tripId;
+      const section = btn.closest('.trip-messages-section');
+      const input   = section?.querySelector('.trip-msg-input');
+      const text    = input?.value?.trim();
       if (!text) return;
       btn.disabled = true; btn.textContent = 'Enviando...';
       try {
         const msg  = await apiPost(`/api/trips/${tripId}/messages`, { text });
-        const list = document.getElementById(`trip-msgs-${tripId}`);
+        const list = section?.querySelector('.trip-messages-list');
         if (list) {
           list.querySelector('.trip-msg-empty')?.remove();
           const div = document.createElement('div');
@@ -1056,6 +1060,91 @@ async function createThread(e) {
     document.getElementById('new-thread-form').reset();
     loadThread(thread.id);
   } catch (err) { msgShow('nf-error', err.message); }
+}
+
+/* ══════════════════════════════════════════════════════════
+   ADMIN STATS
+══════════════════════════════════════════════════════════ */
+async function loadAdminStats() {
+  const container = document.getElementById('admin-stats-container');
+  if (!container) return;
+  container.innerHTML = '<p class="stats-loading">Cargando estadísticas...</p>';
+  try {
+    const s = await apiGet('/api/admin/stats');
+    container.innerHTML = `
+      <div class="stats-week-note">Datos de los últimos 7 días marcados con <span class="week-badge">semana</span></div>
+      <div class="stats-grid">
+        <div class="stat-group">
+          <div class="stat-group-title">Usuarios</div>
+          <div class="stat-card">
+            <div class="stat-value">${s.users.total}</div>
+            <div class="stat-label">Registrados total</div>
+          </div>
+          <div class="stat-card stat-card-week">
+            <div class="stat-value">${s.users.newThisWeek}</div>
+            <div class="stat-label">Nuevos <span class="week-badge">semana</span></div>
+          </div>
+          <div class="stat-card stat-card-danger">
+            <div class="stat-value">${s.users.deleted}</div>
+            <div class="stat-label">Cuentas eliminadas</div>
+          </div>
+        </div>
+        <div class="stat-group">
+          <div class="stat-group-title">Viajes</div>
+          <div class="stat-card">
+            <div class="stat-value">${s.trips.total}</div>
+            <div class="stat-label">Publicados total</div>
+          </div>
+          <div class="stat-card stat-card-week">
+            <div class="stat-value">${s.trips.newThisWeek}</div>
+            <div class="stat-label">Nuevos <span class="week-badge">semana</span></div>
+          </div>
+        </div>
+        <div class="stat-group">
+          <div class="stat-group-title">Reservas</div>
+          <div class="stat-card">
+            <div class="stat-value">${s.bookings.total}</div>
+            <div class="stat-label">Reservas total</div>
+          </div>
+          <div class="stat-card stat-card-week">
+            <div class="stat-value">${s.bookings.newThisWeek}</div>
+            <div class="stat-label">Nuevas <span class="week-badge">semana</span></div>
+          </div>
+        </div>
+        <div class="stat-group">
+          <div class="stat-group-title">Foro</div>
+          <div class="stat-card">
+            <div class="stat-value">${s.forum.threads}</div>
+            <div class="stat-label">Hilos total</div>
+          </div>
+          <div class="stat-card stat-card-week">
+            <div class="stat-value">${s.forum.newThreadsThisWeek}</div>
+            <div class="stat-label">Hilos nuevos <span class="week-badge">semana</span></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">${s.forum.replies}</div>
+            <div class="stat-label">Respuestas total</div>
+          </div>
+          <div class="stat-card stat-card-week">
+            <div class="stat-value">${s.forum.newRepliesThisWeek}</div>
+            <div class="stat-label">Respuestas nuevas <span class="week-badge">semana</span></div>
+          </div>
+        </div>
+        <div class="stat-group">
+          <div class="stat-group-title">Conversaciones de viaje</div>
+          <div class="stat-card">
+            <div class="stat-value">${s.conversations.totalMessages}</div>
+            <div class="stat-label">Mensajes total</div>
+          </div>
+          <div class="stat-card stat-card-week">
+            <div class="stat-value">${s.conversations.newThisWeek}</div>
+            <div class="stat-label">Nuevos <span class="week-badge">semana</span></div>
+          </div>
+        </div>
+      </div>`;
+  } catch (err) {
+    container.innerHTML = `<p class="stats-error">Error al cargar estadísticas: ${esc(err.message)}</p>`;
+  }
 }
 
 /* ══════════════════════════════════════════════════════════
