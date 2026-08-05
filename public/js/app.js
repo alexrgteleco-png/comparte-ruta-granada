@@ -467,6 +467,7 @@ function renderSearchResults(trips) {
           t.bookings    = [...(t.bookings || []), booking];
           t.myBooking   = booking;
           t.availableSeats = Math.max(0, (t.availableSeats ?? t.seats) - 1);
+          if (booking.commentMessage) t.messages = [...(t.messages || []), booking.commentMessage];
           state.searchResults[idx] = t;
           rerenderTripCard(tripId, t);
           document.getElementById(`book-inline-${tripId}`)?.classList.add('hidden');

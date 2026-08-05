@@ -454,13 +454,16 @@ app.post('/api/trips/:id/bookings', requireAuth, async (req, res) => {
     const booking = { id: uuidv4(), userId: uid, bookedAt: new Date().toISOString(), comment: comment?.trim() || '' };
 
     setUserCooldown(uid + ':booking');
-    // Use $set on the full array to avoid any $push atomicity issues on Atlas M0
-    const updatedBookings = [...bookings, booking];
-    await col('trips').updateOne(
-      { id: req.params.id },
-      { $set: { bookings: updatedBookings } },
-      { maxTimeMS: 10000 }
-    );
+
+    // If the passenger left a comment, also post it as the first trip message
+    let commentMessage = null;
+    if (booking.comment) {
+      commentMessage = { id: uuidv4(), userId: uid, text: booking.comment, createdAt: booking.bookedAt };
+    }
+
+    const updateFields = { bookings: [...bookings, booking] };
+    if (commentMessage) updateFields.messages = [...(trip.messages || []), commentMessage];
+    await col('trips').updateOne({ id: req.params.id }, { $set: updateFields }, { maxTimeMS: 10000 });
 
     const [passenger, owner] = await Promise.all([
       col('users').findOne({ id: req.session.userId }, { maxTimeMS: 8000 }),
@@ -472,7 +475,13 @@ app.post('/api/trips/:id/bookings', requireAuth, async (req, res) => {
       subject: 'Nueva reserva en tu viaje — Comparte Ruta Granada',
       text: `Hola ${owner?.alias},\n\n${passenger?.alias} ha reservado una plaza en tu viaje:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\nPlazas restantes: ${trip.seats - bookings.length - 1}${commentLine}\n\n— Comparte Ruta Granada`
     }).catch(err => console.error('[EMAIL booking]', err.message));
-    res.json({ ...booking, userAlias: passenger?.alias || 'Usuario' });
+
+    const passengerAlias = passenger?.alias || 'Usuario';
+    res.json({
+      ...booking,
+      userAlias: passengerAlias,
+      commentMessage: commentMessage ? { ...commentMessage, userAlias: passengerAlias } : null,
+    });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
 });
 
