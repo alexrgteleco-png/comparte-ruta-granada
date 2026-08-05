@@ -28,6 +28,8 @@ const state = {
   s2DestCoords:    null,
   // Forum
   currentThreadId: null,
+  // Last search results (for live UI updates)
+  searchResults:   [],
 };
 
 /* ══════════════════════════════════════════════════════════
@@ -265,6 +267,7 @@ async function searchTrips() {
 
   try {
     const trips = await apiGet('/api/trips?' + params.toString());
+    state.searchResults = trips;
     renderSearchResults(trips);
     showTripsOnMap(trips);
   } catch (e) {
@@ -343,24 +346,34 @@ function renderSearchResults(trips) {
       const form = document.getElementById(`book-inline-${tripId}`);
       if (form) {
         form.classList.toggle('hidden');
-        if (!form.classList.contains('hidden')) {
-          document.getElementById(`book-comment-${tripId}`)?.focus();
-        }
+        if (!form.classList.contains('hidden')) document.getElementById(`book-comment-${tripId}`)?.focus();
       }
     });
   });
 
-  // Confirm booking
+  // Confirm booking — live card update
   el.querySelectorAll('.confirm-book-btn').forEach(btn => {
     btn.addEventListener('click', async e => {
       e.stopPropagation();
-      const tripId = btn.dataset.tripId;
+      const tripId  = btn.dataset.tripId;
       const comment = document.getElementById(`book-comment-${tripId}`)?.value?.trim() || '';
-      btn.disabled = true;
+      btn.disabled  = true;
+      btn.textContent = 'Reservando...';
       try {
-        await apiPost(`/api/trips/${tripId}/bookings`, { comment });
-        await searchTrips();
-      } catch (err) { alert(err.message); btn.disabled = false; }
+        const booking = await apiPost(`/api/trips/${tripId}/bookings`, { comment });
+        // Live update: patch state and re-render just this card
+        const idx = state.searchResults.findIndex(t => t.id === tripId);
+        if (idx !== -1) {
+          const t = state.searchResults[idx];
+          t.bookings    = [...(t.bookings || []), booking];
+          t.myBooking   = booking;
+          t.availableSeats = Math.max(0, (t.availableSeats ?? t.seats) - 1);
+          state.searchResults[idx] = t;
+          rerenderTripCard(tripId, t);
+        } else {
+          await searchTrips();
+        }
+      } catch (err) { alert(err.message); btn.disabled = false; btn.textContent = 'Confirmar reserva'; }
     });
   });
 
@@ -372,15 +385,28 @@ function renderSearchResults(trips) {
     });
   });
 
-  // Cancel own booking
+  // Cancel own booking — live card update
   el.querySelectorAll('.cancel-mine-btn').forEach(btn => {
     btn.addEventListener('click', async e => {
       e.stopPropagation();
       if (!confirm('¿Cancelar tu reserva en este viaje?')) return;
+      const tripId = btn.dataset.tripId;
+      btn.disabled = true;
       try {
-        await apiDelete(`/api/trips/${btn.dataset.tripId}/bookings/mine/cancel`);
-        await searchTrips();
-      } catch (err) { alert(err.message); }
+        await apiDelete(`/api/trips/${tripId}/bookings/mine/cancel`);
+        // Live update
+        const idx = state.searchResults.findIndex(t => t.id === tripId);
+        if (idx !== -1) {
+          const t = state.searchResults[idx];
+          t.bookings      = (t.bookings || []).filter(b => b.id !== t.myBooking?.id);
+          t.myBooking     = null;
+          t.availableSeats = (t.availableSeats ?? 0) + 1;
+          state.searchResults[idx] = t;
+          rerenderTripCard(tripId, t);
+        } else {
+          await searchTrips();
+        }
+      } catch (err) { alert(err.message); btn.disabled = false; }
     });
   });
 
@@ -414,6 +440,67 @@ function renderSearchResults(trips) {
         await apiPost('/api/reports', { reportedUserId: btn.dataset.userId, message });
         form?.classList.add('hidden');
         alert('Reporte enviado. Se ha publicado un hilo en el foro.');
+      } catch (err) { alert(err.message); btn.disabled = false; }
+    });
+  });
+}
+
+function rerenderTripCard(tripId, t) {
+  const el    = document.getElementById('s1-results');
+  const card  = el?.querySelector(`.trip-card[data-id="${tripId}"]`);
+  if (!card) return;
+  const avail  = t.availableSeats ?? (t.seats - (t.bookings?.length || 0));
+  const isOwn  = !!t.isOwn;
+  const booked = !!t.myBooking;
+  const full   = avail <= 0 && !booked;
+
+  // Update badges
+  let badges = '';
+  if (isOwn)   badges += `<span class="badge badge-own">Tu viaje</span>`;
+  if (booked)  badges += `<span class="badge badge-booked">Reservado</span>`;
+  if (full)    badges += `<span class="badge badge-full">Completo</span>`;
+
+  let actionBtns = '';
+  if (!isOwn && !booked && avail > 0) actionBtns += `<button class="btn btn-primary btn-sm book-toggle-btn" data-trip-id="${esc(t.id)}">Reservar plaza</button>`;
+  if (!isOwn && booked)               actionBtns += `<button class="btn btn-outline btn-sm cancel-mine-btn" data-trip-id="${esc(t.id)}">Cancelar mi reserva</button>`;
+
+  const tripActionsEl = card.querySelector('.trip-actions');
+  if (tripActionsEl) tripActionsEl.innerHTML = badges + actionBtns;
+
+  const metaEl = card.querySelector('.trip-meta');
+  if (metaEl) {
+    const spans = metaEl.querySelectorAll('span');
+    if (spans[3]) spans[3].textContent = `🚗 ${avail} plaza${avail !== 1 ? 's' : ''} libre${avail !== 1 ? 's' : ''}`;
+  }
+
+  // Hide booking inline form (if visible) and re-bind events
+  const bookForm = card.querySelector(`#book-inline-${tripId}`);
+  if (bookForm) bookForm.classList.add('hidden');
+
+  // Re-bind the new buttons (replace old ones with fresh listeners)
+  card.querySelectorAll('.book-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const form = document.getElementById(`book-inline-${btn.dataset.tripId}`);
+      if (form) { form.classList.toggle('hidden'); if (!form.classList.contains('hidden')) document.getElementById(`book-comment-${btn.dataset.tripId}`)?.focus(); }
+    });
+  });
+  card.querySelectorAll('.cancel-mine-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      if (!confirm('¿Cancelar tu reserva en este viaje?')) return;
+      btn.disabled = true;
+      try {
+        await apiDelete(`/api/trips/${btn.dataset.tripId}/bookings/mine/cancel`);
+        const idx = state.searchResults.findIndex(tr => tr.id === btn.dataset.tripId);
+        if (idx !== -1) {
+          const tr = state.searchResults[idx];
+          tr.bookings      = (tr.bookings || []).filter(b => b.id !== tr.myBooking?.id);
+          tr.myBooking     = null;
+          tr.availableSeats = (tr.availableSeats ?? 0) + 1;
+          state.searchResults[idx] = tr;
+          rerenderTripCard(btn.dataset.tripId, tr);
+        }
       } catch (err) { alert(err.message); btn.disabled = false; }
     });
   });
@@ -603,13 +690,14 @@ async function loadMyTrips() {
         ? `<span class="badge badge-recur" title="Serie recurrente">&#8635; ${esc(t.recurrenceLabel)}</span>`
         : '';
       return `
-        <div class="my-trip-card">
+        <div class="my-trip-card" data-trip-id="${esc(t.id)}">
           <div class="my-trip-header">
             <div>
               <div class="my-trip-route">${esc(t.origin)}<span class="arrow">&#10132;</span>${esc(t.destination)}</div>
               <div class="my-trip-meta">&#128197; ${esc(fmtDate(t.date))} · &#128336; ${esc(t.time)} · ${esc(String(t.availableSeats ?? t.seats))} plaza(s) libre(s)</div>
               ${recurBadge}
             </div>
+            <button class="btn btn-danger btn-sm delete-trip-btn" data-trip-id="${esc(t.id)}" title="Borrar viaje">Borrar viaje</button>
           </div>
           <div class="passengers-list">${passengerRows}</div>
         </div>`;
@@ -618,10 +706,34 @@ async function loadMyTrips() {
     el.querySelectorAll('.cancel-booking-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!confirm('¿Cancelar esta reserva? Se notificará al pasajero por email.')) return;
+        btn.disabled = true;
         try {
           await apiDelete(`/api/trips/${btn.dataset.tripId}/bookings/${btn.dataset.bookingId}`);
-          loadMyTrips();
-        } catch (err) { alert(err.message); }
+          // Live remove passenger row
+          const row = btn.closest('.passenger-row');
+          if (row) {
+            row.style.opacity = '0';
+            row.style.transition = 'opacity .3s';
+            setTimeout(() => { row.remove(); }, 300);
+          }
+        } catch (err) { alert(err.message); btn.disabled = false; }
+      });
+    });
+
+    el.querySelectorAll('.delete-trip-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('¿Borrar este viaje? Se eliminará permanentemente.')) return;
+        btn.disabled = true;
+        try {
+          await apiDelete(`/api/trips/${btn.dataset.tripId}`);
+          // Live remove the card
+          const card = btn.closest('.my-trip-card');
+          if (card) {
+            card.style.opacity = '0';
+            card.style.transition = 'opacity .3s';
+            setTimeout(() => { card.remove(); }, 300);
+          }
+        } catch (err) { alert(err.message); btn.disabled = false; }
       });
     });
   } catch (err) { el.innerHTML = `<p class="no-results">${esc(err.message)}</p>`; }
