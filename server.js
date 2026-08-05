@@ -14,6 +14,10 @@ const { initTransporter, sendEmail } = require('./emailService');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
+if (!process.env.SESSION_SECRET) {
+  console.warn('[WARN] SESSION_SECRET no configurado. Usando fallback inseguro — configúralo en producción.');
+}
+
 // ── MongoDB ───────────────────────────────────────────────────────────────────
 
 let _client = null;
@@ -220,10 +224,16 @@ app.post('/api/register', authLimiter, async (req, res) => {
     const { username, password, alias, email } = req.body;
     if (!username?.trim() || !password?.trim() || !alias?.trim())
       return res.status(400).json({ error: 'Usuario, alias y contraseña son obligatorios' });
-    if (username.trim().length < 3)
-      return res.status(400).json({ error: 'El nombre de usuario debe tener al menos 3 caracteres' });
+    if (username.trim().length < 3 || username.trim().length > 30)
+      return res.status(400).json({ error: 'El usuario debe tener entre 3 y 30 caracteres' });
+    if (!/^[a-z0-9_.-]+$/i.test(username.trim()))
+      return res.status(400).json({ error: 'El usuario solo puede contener letras, números, puntos, guiones y guiones bajos' });
+    if (alias.trim().length > 80)
+      return res.status(400).json({ error: 'El alias no puede superar los 80 caracteres' });
     if (password.length < 6)
       return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+    if (email?.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
+      return res.status(400).json({ error: 'El formato del email no es válido' });
 
     const users = col('users');
     if (await users.findOne({ username: username.toLowerCase().trim() }))
@@ -324,6 +334,10 @@ app.post('/api/trips', requireAuth, async (req, res) => {
             date, time, seats, notes, recurrence, recurrenceFrom, recurrenceTo, weekdays } = req.body;
     if (!origin || !destination || !time || !seats)
       return res.status(400).json({ error: 'Faltan campos obligatorios' });
+    if (origin.trim().length > 100 || destination.trim().length > 100)
+      return res.status(400).json({ error: 'Origen y destino no pueden superar los 100 caracteres' });
+    if (!/^\d{2}:\d{2}$/.test(time))
+      return res.status(400).json({ error: 'Hora de salida con formato inválido (HH:MM)' });
 
     const seatsNum = parseInt(seats, 10);
     if (isNaN(seatsNum) || seatsNum < 1 || seatsNum > 6)
@@ -333,7 +347,13 @@ app.post('/api/trips', requireAuth, async (req, res) => {
 
     const oLat = parseFloat(originLat), oLng = parseFloat(originLng);
     const dLat = parseFloat(destinationLat), dLng = parseFloat(destinationLng);
-    if (oLat && oLng && dLat && dLng && haversineKm(oLat, oLng, dLat, dLng) < 1)
+    const validCoord = (lat, lng) =>
+      isFinite(lat) && isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+    if ((originLat || originLng) && !validCoord(oLat, oLng))
+      return res.status(400).json({ error: 'Coordenadas de origen no válidas' });
+    if ((destinationLat || destinationLng) && !validCoord(dLat, dLng))
+      return res.status(400).json({ error: 'Coordenadas de destino no válidas' });
+    if (validCoord(oLat, oLng) && validCoord(dLat, dLng) && haversineKm(oLat, oLng, dLat, dLng) < 1)
       return res.status(400).json({ error: 'La distancia mínima entre origen y destino es de 1 km' });
 
     const todayStr   = new Date().toISOString().split('T')[0];
@@ -341,7 +361,7 @@ app.post('/api/trips', requireAuth, async (req, res) => {
 
     const uid = req.session.userId;
 
-    const cooldownWait = checkUserCooldown(uid);
+    const cooldownWait = checkUserCooldown(uid + ':trip');
     if (cooldownWait > 0)
       return res.status(429).json({ error: `Espera ${cooldownWait} segundo${cooldownWait !== 1 ? 's' : ''} antes de publicar otro viaje` });
 
@@ -375,15 +395,20 @@ app.post('/api/trips', requireAuth, async (req, res) => {
       const label     = `${dayLabel} · ${recurrenceFrom} – ${recurrenceTo}`;
       const trips     = dates.map(d => ({ ...base, id: uuidv4(), date: d, recurrenceGroupId: groupId, recurrenceLabel: label }));
 
-      setUserCooldown(uid);
+      setUserCooldown(uid + ':trip');
       await col('trips').insertMany(trips);
       res.json({ recurrent: true, count: trips.length, label, trips: trips.map(t => enrichTrip(t, users, uid)) });
     } else {
       if (!date) return res.status(400).json({ error: 'La fecha es obligatoria' });
       if (date < todayStr || date > maxDateStr)
         return res.status(400).json({ error: 'La fecha debe estar entre hoy y los próximos 60 días' });
+      if (date === todayStr) {
+        const now = new Date();
+        const nowTime = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+        if (time <= nowTime) return res.status(400).json({ error: 'La hora de salida ya ha pasado para hoy' });
+      }
       const trip = { ...base, id: uuidv4(), date };
-      setUserCooldown(uid);
+      setUserCooldown(uid + ':trip');
       await col('trips').insertOne(trip);
       res.json(enrichTrip(trip, users, uid));
     }
@@ -415,7 +440,7 @@ app.post('/api/trips/:id/bookings', requireAuth, async (req, res) => {
 
     const uid = req.session.userId;
 
-    const cooldownWait = checkUserCooldown(uid);
+    const cooldownWait = checkUserCooldown(uid + ':booking');
     if (cooldownWait > 0)
       return res.status(429).json({ error: `Espera ${cooldownWait} segundo${cooldownWait !== 1 ? 's' : ''} antes de realizar otra reserva` });
 
@@ -428,7 +453,7 @@ app.post('/api/trips/:id/bookings', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'El comentario no puede superar los 255 caracteres' });
     const booking = { id: uuidv4(), userId: uid, bookedAt: new Date().toISOString(), comment: comment?.trim() || '' };
 
-    setUserCooldown(uid);
+    setUserCooldown(uid + ':booking');
     // Use $set on the full array to avoid any $push atomicity issues on Atlas M0
     const updatedBookings = [...bookings, booking];
     await col('trips').updateOne(
@@ -541,12 +566,37 @@ app.put('/api/profile', requireAuth, async (req, res) => {
   try {
     const { alias, password, email, municipio, codigoPostal, walkingDistanceKm } = req.body;
     const update = {};
-    if (alias             !== undefined) update.alias             = alias;
-    if (email             !== undefined) update.email             = email;
-    if (municipio         !== undefined) update.municipio         = municipio;
-    if (codigoPostal      !== undefined) update.codigoPostal      = codigoPostal;
-    if (walkingDistanceKm !== undefined) update.walkingDistanceKm = parseFloat(walkingDistanceKm);
-    if (password)                        update.password          = await bcrypt.hash(password, 10);
+    const VALID_WALK_KM = [0, 0.5, 1, 2, 5, 10];
+
+    if (alias !== undefined) {
+      const a = alias.trim();
+      if (!a)           return res.status(400).json({ error: 'El alias no puede estar vacío' });
+      if (a.length > 80) return res.status(400).json({ error: 'El alias no puede superar los 80 caracteres' });
+      update.alias = a;
+    }
+    if (email !== undefined) {
+      const e = email.trim();
+      if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
+        return res.status(400).json({ error: 'El formato del email no es válido' });
+      update.email = e;
+    }
+    if (municipio         !== undefined) update.municipio     = municipio.trim().slice(0, 100);
+    if (codigoPostal      !== undefined) {
+      const cp = codigoPostal.trim();
+      if (cp && !/^\d{5}$/.test(cp))
+        return res.status(400).json({ error: 'El código postal debe tener exactamente 5 dígitos' });
+      update.codigoPostal = cp;
+    }
+    if (walkingDistanceKm !== undefined) {
+      const wkm = parseFloat(walkingDistanceKm);
+      if (!VALID_WALK_KM.includes(wkm))
+        return res.status(400).json({ error: 'Distancia a pie no válida' });
+      update.walkingDistanceKm = wkm;
+    }
+    if (password) {
+      if (password.length < 6) return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres' });
+      update.password = await bcrypt.hash(password, 10);
+    }
     const result = await col('users').findOneAndUpdate(
       { id: req.session.userId }, { $set: update }, { returnDocument: 'after' }
     );
@@ -589,9 +639,10 @@ app.get('/api/forum/threads/:id', async (req, res) => {
 app.post('/api/forum/threads', requireAuth, async (req, res) => {
   try {
     const { title, content } = req.body;
-    if (!title || !content) return res.status(400).json({ error: 'Título y mensaje son obligatorios' });
+    if (!title?.trim() || !content?.trim()) return res.status(400).json({ error: 'Título y mensaje son obligatorios' });
+    if (title.trim().length > 120) return res.status(400).json({ error: 'El título no puede superar los 120 caracteres' });
     if (content.trim().length > 255) return res.status(400).json({ error: 'El mensaje no puede superar los 255 caracteres' });
-    const thread = { id: uuidv4(), userId: req.session.userId, title, content, createdAt: new Date().toISOString(), replies: [], isReport: false };
+    const thread = { id: uuidv4(), userId: req.session.userId, title: title.trim(), content: content.trim(), createdAt: new Date().toISOString(), replies: [], isReport: false };
     await col('threads').insertOne(thread);
     const u = await col('users').findOne({ id: req.session.userId });
     res.json({ ...thread, userAlias: u?.alias || 'Usuario', replyCount: 0 });
@@ -605,8 +656,9 @@ app.post('/api/forum/threads/:id/replies', requireAuth, async (req, res) => {
     if (content.trim().length > 255) return res.status(400).json({ error: 'El mensaje no puede superar los 255 caracteres' });
     const thread = await col('threads').findOne({ id: req.params.id });
     if (!thread) return res.status(404).json({ error: 'Hilo no encontrado' });
-    const reply = { id: uuidv4(), userId: req.session.userId, content, createdAt: new Date().toISOString() };
-    await col('threads').updateOne({ id: req.params.id }, { $push: { replies: reply } });
+    const reply = { id: uuidv4(), userId: req.session.userId, content: content.trim(), createdAt: new Date().toISOString() };
+    const updatedReplies = [...(thread.replies || []), reply];
+    await col('threads').updateOne({ id: req.params.id }, { $set: { replies: updatedReplies } }, { maxTimeMS: 10000 });
     const u = await col('users').findOne({ id: req.session.userId });
     res.json({ ...reply, userAlias: u?.alias || 'Usuario' });
   } catch { res.status(500).json({ error: 'Error interno' }); }
@@ -628,12 +680,15 @@ app.post('/api/reports', requireAuth, async (req, res) => {
   try {
     const { reportedUserId, message } = req.body;
     if (!reportedUserId || !message?.trim()) return res.status(400).json({ error: 'Faltan datos del reporte' });
+    if (message.trim().length > 500) return res.status(400).json({ error: 'El motivo del reporte no puede superar los 500 caracteres' });
     if (reportedUserId === req.session.userId) return res.status(400).json({ error: 'No puedes reportarte a ti mismo' });
-    const [reported, reporter] = await Promise.all([
+    const [reported, reporter, existingReport] = await Promise.all([
       col('users').findOne({ id: reportedUserId }),
-      col('users').findOne({ id: req.session.userId })
+      col('users').findOne({ id: req.session.userId }),
+      col('reports').findOne({ reporterId: req.session.userId, reportedUserId }),
     ]);
     if (!reported) return res.status(404).json({ error: 'Usuario no encontrado' });
+    if (existingReport) return res.status(400).json({ error: 'Ya has enviado un reporte contra este usuario anteriormente' });
     const newCount = (reported.reportCount || 0) + 1;
     await col('users').updateOne({ id: reportedUserId }, { $set: { reportCount: newCount } });
     const thread = { id: uuidv4(), userId: req.session.userId, title: `[REPORTE] Reporte contra el usuario "${reported.alias}"`, content: message, isReport: true, reportedUserId, createdAt: new Date().toISOString(), replies: [] };

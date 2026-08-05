@@ -244,11 +244,11 @@
                 <div class="form-row">
                   <div class="form-group">
                     <label for="p-alias">Alias <span class="req">*</span></label>
-                    <input type="text" id="p-alias" placeholder="El nombre que ven otros usuarios" required>
+                    <input type="text" id="p-alias" placeholder="El nombre que ven otros usuarios" maxlength="80" required>
                   </div>
                   <div class="form-group">
-                    <label for="p-email">Email <span class="req">*</span></label>
-                    <input type="email" id="p-email" placeholder="tu@email.com" required>
+                    <label for="p-email">Email <span class="opt">(opcional)</span></label>
+                    <input type="email" id="p-email" placeholder="tu@email.com">
                   </div>
                 </div>
                 <hr class="form-sep">
@@ -344,7 +344,7 @@
             <form id="new-thread-form" novalidate>
               <div class="form-group">
                 <label for="thread-title">Título <span class="req">*</span></label>
-                <input type="text" id="thread-title" placeholder="Título del hilo" required>
+                <input type="text" id="thread-title" placeholder="Título del hilo" maxlength="120" required>
               </div>
               <div class="form-group">
                 <label for="thread-content">Mensaje <span class="req">*</span></label>

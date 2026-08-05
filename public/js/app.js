@@ -240,7 +240,10 @@ function showSection(id) {
   }
   if (id === 'sec3') loadProfile();
   if (id === 'sec4') loadForumThreads();
-  if (id === 'sec6') loadAdminStats();
+  if (id === 'sec6') {
+    if (state.user?.role !== 'admin') { showSection('sec1'); return; }
+    loadAdminStats();
+  }
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -271,6 +274,9 @@ function setupSearchAutocomplete() {
 }
 
 async function searchTrips() {
+  const btn = document.getElementById('s1-search-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Buscando...'; }
+
   const origin = document.getElementById('s1-origin').value.trim();
   const dest   = document.getElementById('s1-dest').value.trim();
   const date   = document.getElementById('s1-date').value;
@@ -289,6 +295,8 @@ async function searchTrips() {
     showTripsOnMap(trips);
   } catch (e) {
     document.getElementById('s1-results').innerHTML = `<p class="no-results">${esc(e.message)}</p>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Buscar'; }
   }
 }
 
@@ -366,9 +374,10 @@ function buildTripDetail(t) {
 function renderSearchResults(trips) {
   const el = document.getElementById('s1-results');
   if (!trips.length) { el.innerHTML = '<p class="no-results">No se encontraron viajes con esos criterios.</p>'; return; }
+  const countBar = `<p class="search-count">${trips.length} viaje${trips.length !== 1 ? 's' : ''} encontrado${trips.length !== 1 ? 's' : ''}</p>`;
   const isAdmin = state.user?.role === 'admin';
 
-  el.innerHTML = trips.map(t => {
+  el.innerHTML = countBar + trips.map(t => {
     const avail = t.availableSeats ?? (t.seats - (t.bookings?.length || 0));
     const isOwn = !!t.isOwn;
     const booked = !!t.myBooking;
@@ -412,7 +421,7 @@ function renderSearchResults(trips) {
         </div>
         <div class="report-inline hidden" id="report-inline-${esc(t.id)}">
           <p>Indicar el motivo del reporte (se publicará en el foro de forma pública):</p>
-          <textarea rows="3" placeholder="Describe el comportamiento inapropiado..."></textarea>
+          <textarea rows="3" maxlength="500" placeholder="Describe el comportamiento inapropiado..."></textarea>
           <div class="report-inline-actions">
             <button class="btn btn-danger btn-sm submit-report-btn" data-user-id="${esc(t.userId)}" data-trip-id="${esc(t.id)}">Enviar reporte</button>
             <button class="btn btn-outline btn-sm cancel-report-btn" data-trip-id="${esc(t.id)}">Cancelar</button>
@@ -460,6 +469,10 @@ function renderSearchResults(trips) {
           t.availableSeats = Math.max(0, (t.availableSeats ?? t.seats) - 1);
           state.searchResults[idx] = t;
           rerenderTripCard(tripId, t);
+          document.getElementById(`book-inline-${tripId}`)?.classList.add('hidden');
+          const card = document.querySelector(`.trip-card[data-id="${tripId}"]`);
+          card?.insertAdjacentHTML('afterbegin', '<div class="booking-success-toast">✓ Reserva confirmada</div>');
+          setTimeout(() => card?.querySelector('.booking-success-toast')?.remove(), 3500);
         } else {
           await searchTrips();
         }
@@ -528,7 +541,8 @@ function renderSearchResults(trips) {
   el.querySelectorAll('.cancel-report-btn').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
-      document.getElementById(`report-inline-${btn.dataset.tripId}`)?.classList.add('hidden');
+      const form = document.getElementById(`report-inline-${btn.dataset.tripId}`);
+      if (form) { form.classList.add('hidden'); form.querySelector('textarea').value = ''; }
     });
   });
 
@@ -745,6 +759,12 @@ async function publishTrip(e) {
   } else {
     const date = document.getElementById('s2-date').value;
     if (!date) { msgShow('s2-error', 'La fecha es obligatoria.'); return; }
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (date === todayStr) {
+      const now = new Date();
+      const nowTime = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+      if (body.time && body.time <= nowTime) { msgShow('s2-error', 'La hora de salida ya ha pasado para hoy.'); return; }
+    }
     body.date = date;
   }
 
@@ -800,6 +820,8 @@ async function saveProfile(e) {
   const password = document.getElementById('p-password').value;
   const pass2    = document.getElementById('p-password2').value;
   if (!alias) { msgShow('p-error', 'El alias no puede estar vacío.'); return; }
+  if (alias.length > 80) { msgShow('p-error', 'El alias no puede superar los 80 caracteres.'); return; }
+  if (password && password.length < 6) { msgShow('p-error', 'La contraseña debe tener al menos 6 caracteres.'); return; }
   if (password && password !== pass2) { msgShow('p-error', 'Las contraseñas no coinciden.'); return; }
   const body = {
     alias, email,
@@ -942,10 +964,11 @@ async function loadMyBookings() {
     el.querySelectorAll('.cancel-mine-btn2').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!confirm('¿Cancelar tu reserva en este viaje?')) return;
+        btn.disabled = true; btn.textContent = 'Cancelando...';
         try {
           await apiDelete(`/api/trips/${btn.dataset.tripId}/bookings/mine/cancel`);
           loadMyBookings();
-        } catch (err) { alert(err.message); }
+        } catch (err) { alert(err.message); btn.disabled = false; btn.textContent = 'Cancelar reserva'; }
       });
     });
   } catch (err) { el.innerHTML = `<p class="no-results">${esc(err.message)}</p>`; }

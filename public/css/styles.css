@@ -328,6 +328,7 @@ hr { border: none; }
 /* ── Results list ───────────────────────────────────────────────────────── */
 .results-list { display: flex; flex-direction: column; gap: .6rem; }
 .trip-card {
+  position: relative;
   background: var(--c-surface);
   border: 1.5px solid var(--c-border);
   border-radius: var(--r-lg);
@@ -1007,6 +1008,41 @@ hr { border: none; }
   font-size: .85rem;
   color: var(--c-text-muted);
   margin: .25rem 0 .75rem;
+}
+
+/* ── Search result count bar ─────────────────────────────────────────────── */
+.search-count {
+  font-size: .8rem;
+  color: var(--c-text-muted);
+  margin: 0 0 .75rem;
+  padding: .35rem .5rem;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+}
+
+/* ── Booking success toast ────────────────────────────────────────────────── */
+.booking-success-toast {
+  position: absolute;
+  top: .5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--c-success, #2C5F2E);
+  color: #fff;
+  font-size: .82rem;
+  font-weight: 600;
+  padding: .3rem .85rem;
+  border-radius: 20px;
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: none;
+  animation: fadeInOut 3.5s ease forwards;
+}
+@keyframes fadeInOut {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(-4px); }
+  15%  { opacity: 1; transform: translateX(-50%) translateY(0); }
+  75%  { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 /* ── Admin stats (sec6) ───────────────────────────────────────────────────── */
