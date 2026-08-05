@@ -352,17 +352,26 @@ app.post('/api/trips/:id/bookings', requireAuth, async (req, res) => {
     if (bookings.some(b => b.userId === req.session.userId)) return res.status(400).json({ error: 'Ya tienes una reserva en este viaje' });
     if (bookings.length >= trip.seats) return res.status(400).json({ error: 'No quedan plazas disponibles' });
 
-    const booking = { id: uuidv4(), userId: req.session.userId, bookedAt: new Date().toISOString() };
-    await col('trips').updateOne({ id: req.params.id }, { $push: { bookings: booking } });
+    const { comment } = req.body || {};
+    const booking = { id: uuidv4(), userId: req.session.userId, bookedAt: new Date().toISOString(), comment: comment?.trim() || '' };
+
+    // Use $set on the full array to avoid any $push atomicity issues on Atlas M0
+    const updatedBookings = [...bookings, booking];
+    await col('trips').updateOne(
+      { id: req.params.id },
+      { $set: { bookings: updatedBookings } },
+      { maxTimeMS: 10000 }
+    );
 
     const [passenger, owner] = await Promise.all([
-      col('users').findOne({ id: req.session.userId }),
-      col('users').findOne({ id: trip.userId })
+      col('users').findOne({ id: req.session.userId }, { maxTimeMS: 8000 }),
+      col('users').findOne({ id: trip.userId }, { maxTimeMS: 8000 })
     ]);
+    const commentLine = booking.comment ? `\n\nMensaje del pasajero: "${booking.comment}"` : '';
     sendEmail({
       to: owner?.email,
       subject: 'Nueva reserva en tu viaje — Comparte Ruta Granada',
-      text: `Hola ${owner?.alias},\n\n${passenger?.alias} ha reservado una plaza en tu viaje:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\nPlazas restantes: ${trip.seats - bookings.length - 1}\n\n— Comparte Ruta Granada`
+      text: `Hola ${owner?.alias},\n\n${passenger?.alias} ha reservado una plaza en tu viaje:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\nPlazas restantes: ${trip.seats - bookings.length - 1}${commentLine}\n\n— Comparte Ruta Granada`
     }).catch(err => console.error('[EMAIL booking]', err.message));
     res.json({ ...booking, userAlias: passenger?.alias || 'Usuario' });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }
@@ -377,10 +386,11 @@ app.delete('/api/trips/:id/bookings/:bid', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Solo el propietario puede cancelar reservas' });
     const booking = (trip.bookings || []).find(b => b.id === req.params.bid);
     if (!booking) return res.status(404).json({ error: 'Reserva no encontrada' });
-    await col('trips').updateOne({ id: req.params.id }, { $pull: { bookings: { id: req.params.bid } } });
+    const remaining = (trip.bookings || []).filter(b => b.id !== req.params.bid);
+    await col('trips').updateOne({ id: req.params.id }, { $set: { bookings: remaining } }, { maxTimeMS: 10000 });
     const [passenger, owner] = await Promise.all([
-      col('users').findOne({ id: booking.userId }),
-      col('users').findOne({ id: trip.userId })
+      col('users').findOne({ id: booking.userId }, { maxTimeMS: 8000 }),
+      col('users').findOne({ id: trip.userId }, { maxTimeMS: 8000 })
     ]);
     sendEmail({
       to: passenger?.email,
@@ -397,15 +407,16 @@ app.delete('/api/trips/:id/bookings/mine/cancel', requireAuth, async (req, res) 
     if (!trip) return res.status(404).json({ error: 'Viaje no encontrado' });
     const booking = (trip.bookings || []).find(b => b.userId === req.session.userId);
     if (!booking) return res.status(404).json({ error: 'No tienes reserva en este viaje' });
-    await col('trips').updateOne({ id: req.params.id }, { $pull: { bookings: { userId: req.session.userId } } });
+    const remaining2 = (trip.bookings || []).filter(b => b.userId !== req.session.userId);
+    await col('trips').updateOne({ id: req.params.id }, { $set: { bookings: remaining2 } }, { maxTimeMS: 10000 });
     const [passenger, owner] = await Promise.all([
-      col('users').findOne({ id: req.session.userId }),
-      col('users').findOne({ id: trip.userId })
+      col('users').findOne({ id: req.session.userId }, { maxTimeMS: 8000 }),
+      col('users').findOne({ id: trip.userId }, { maxTimeMS: 8000 })
     ]);
     sendEmail({
       to: owner?.email,
       subject: 'Reserva cancelada en tu viaje — Comparte Ruta Granada',
-      text: `Hola ${owner?.alias},\n\n${passenger?.alias} ha cancelado su reserva en:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\nAhora tienes ${trip.seats - trip.bookings.length + 1} plaza(s) disponibles.\n\n— Comparte Ruta Granada`
+      text: `Hola ${owner?.alias},\n\n${passenger?.alias} ha cancelado su reserva en:\n\n  Origen:  ${trip.origin}\n  Destino: ${trip.destination}\n  Fecha:   ${trip.date} a las ${trip.time}\n\nAhora tienes ${remaining2.length > trip.seats - 1 ? 0 : trip.seats - remaining2.length} plaza(s) disponibles.\n\n— Comparte Ruta Granada`
     }).catch(err => console.error('[EMAIL cancel-by-passenger]', err.message));
     res.json({ ok: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Error interno' }); }

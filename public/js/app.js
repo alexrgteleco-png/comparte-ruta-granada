@@ -288,7 +288,7 @@ function renderSearchResults(trips) {
     if (full)    badges += `<span class="badge badge-full">Completo</span>`;
 
     let actionBtns = '';
-    if (!isOwn && !booked && avail > 0) actionBtns += `<button class="btn btn-primary btn-sm book-btn" data-trip-id="${esc(t.id)}">Reservar plaza</button>`;
+    if (!isOwn && !booked && avail > 0) actionBtns += `<button class="btn btn-primary btn-sm book-toggle-btn" data-trip-id="${esc(t.id)}">Reservar plaza</button>`;
     if (!isOwn && booked)               actionBtns += `<button class="btn btn-outline btn-sm cancel-mine-btn" data-trip-id="${esc(t.id)}">Cancelar mi reserva</button>`;
 
     let reportBtn = '';
@@ -307,6 +307,14 @@ function renderSearchResults(trips) {
         <div class="trip-card-footer">
           <div class="trip-actions">${badges}${actionBtns}</div>
           ${reportBtn}
+        </div>
+        <div class="report-inline hidden" id="book-inline-${esc(t.id)}">
+          <p>Mensaje opcional para el conductor (se incluirá en el email de notificación):</p>
+          <textarea rows="2" placeholder="Ej: Puedo salir 5 minutos antes si hace falta..." id="book-comment-${esc(t.id)}" maxlength="300"></textarea>
+          <div class="report-inline-actions">
+            <button class="btn btn-primary btn-sm confirm-book-btn" data-trip-id="${esc(t.id)}">Confirmar reserva</button>
+            <button class="btn btn-outline btn-sm cancel-book-inline-btn" data-trip-id="${esc(t.id)}">Cancelar</button>
+          </div>
         </div>
         <div class="report-inline hidden" id="report-inline-${esc(t.id)}">
           <p>Indicar el motivo del reporte (se publicará en el foro de forma pública):</p>
@@ -327,16 +335,40 @@ function renderSearchResults(trips) {
     });
   });
 
-  // Book button
-  el.querySelectorAll('.book-btn').forEach(btn => {
+  // Book button — toggle inline comment form
+  el.querySelectorAll('.book-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const tripId = btn.dataset.tripId;
+      const form = document.getElementById(`book-inline-${tripId}`);
+      if (form) {
+        form.classList.toggle('hidden');
+        if (!form.classList.contains('hidden')) {
+          document.getElementById(`book-comment-${tripId}`)?.focus();
+        }
+      }
+    });
+  });
+
+  // Confirm booking
+  el.querySelectorAll('.confirm-book-btn').forEach(btn => {
     btn.addEventListener('click', async e => {
       e.stopPropagation();
       const tripId = btn.dataset.tripId;
+      const comment = document.getElementById(`book-comment-${tripId}`)?.value?.trim() || '';
       btn.disabled = true;
       try {
-        await apiPost(`/api/trips/${tripId}/bookings`, {});
+        await apiPost(`/api/trips/${tripId}/bookings`, { comment });
         await searchTrips();
       } catch (err) { alert(err.message); btn.disabled = false; }
+    });
+  });
+
+  // Cancel booking inline form
+  el.querySelectorAll('.cancel-book-inline-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      document.getElementById(`book-inline-${btn.dataset.tripId}`)?.classList.add('hidden');
     });
   });
 
@@ -564,6 +596,7 @@ async function loadMyTrips() {
               <span class="passenger-name">${esc(b.userAlias)}</span>
               <span style="font-size:.78rem;color:var(--c-text-muted)">${esc(fmtDT(b.bookedAt))}</span>
               <button class="btn btn-danger btn-sm cancel-booking-btn" data-trip-id="${esc(t.id)}" data-booking-id="${esc(b.id)}">Cancelar</button>
+              ${b.comment ? `<div class="booking-comment">&#128172; ${esc(b.comment)}</div>` : ''}
             </div>`).join('')
         : '<p class="no-passengers">Sin reservas todavía.</p>';
       const recurBadge = t.recurrenceLabel
