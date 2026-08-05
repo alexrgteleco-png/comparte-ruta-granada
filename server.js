@@ -309,18 +309,34 @@ app.post('/api/trips', requireAuth, async (req, res) => {
     if (!origin || !destination || !time || !seats)
       return res.status(400).json({ error: 'Faltan campos obligatorios' });
 
+    const seatsNum = parseInt(seats, 10);
+    if (isNaN(seatsNum) || seatsNum < 1 || seatsNum > 6)
+      return res.status(400).json({ error: 'Las plazas deben estar entre 1 y 6' });
+    if (notes && notes.trim().length > 255)
+      return res.status(400).json({ error: 'Las notas no pueden superar los 255 caracteres' });
+
+    const oLat = parseFloat(originLat), oLng = parseFloat(originLng);
+    const dLat = parseFloat(destinationLat), dLng = parseFloat(destinationLng);
+    if (oLat && oLng && dLat && dLng && haversineKm(oLat, oLng, dLat, dLng) < 1)
+      return res.status(400).json({ error: 'La distancia mínima entre origen y destino es de 1 km' });
+
+    const todayStr   = new Date().toISOString().split('T')[0];
+    const maxDateStr = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
     const uid   = req.session.userId;
     const users = await col('users').find({}).toArray();
     const base  = {
       userId: uid,
-      origin, originLat: parseFloat(originLat) || 0, originLng: parseFloat(originLng) || 0,
-      destination, destinationLat: parseFloat(destinationLat) || 0, destinationLng: parseFloat(destinationLng) || 0,
-      time, seats: parseInt(seats, 10), notes: notes || '',
+      origin, originLat: oLat || 0, originLng: oLng || 0,
+      destination, destinationLat: dLat || 0, destinationLng: dLng || 0,
+      time, seats: seatsNum, notes: notes || '',
       createdAt: new Date().toISOString(), bookings: [],
       recurrenceGroupId: null, recurrenceLabel: null
     };
 
     if (recurrence === 'weekly' && recurrenceFrom && recurrenceTo && Array.isArray(weekdays) && weekdays.length) {
+      if (recurrenceFrom < todayStr) return res.status(400).json({ error: 'La fecha de inicio no puede ser anterior a hoy' });
+      if (recurrenceTo   > maxDateStr) return res.status(400).json({ error: 'La fecha de fin no puede superar los próximos 60 días' });
       const days  = weekdays.map(Number);
       const dates = generateDates(recurrenceFrom, recurrenceTo, days);
       if (!dates.length) return res.status(400).json({ error: 'No hay fechas en ese rango con los días seleccionados' });
@@ -336,6 +352,8 @@ app.post('/api/trips', requireAuth, async (req, res) => {
       res.json({ recurrent: true, count: trips.length, label, trips: trips.map(t => enrichTrip(t, users, uid)) });
     } else {
       if (!date) return res.status(400).json({ error: 'La fecha es obligatoria' });
+      if (date < todayStr || date > maxDateStr)
+        return res.status(400).json({ error: 'La fecha debe estar entre hoy y los próximos 60 días' });
       const trip = { ...base, id: uuidv4(), date };
       await col('trips').insertOne(trip);
       res.json(enrichTrip(trip, users, uid));
@@ -367,6 +385,8 @@ app.post('/api/trips/:id/bookings', requireAuth, async (req, res) => {
     if (bookings.length >= trip.seats) return res.status(400).json({ error: 'No quedan plazas disponibles' });
 
     const { comment } = req.body || {};
+    if (comment && comment.trim().length > 255)
+      return res.status(400).json({ error: 'El comentario no puede superar los 255 caracteres' });
     const booking = { id: uuidv4(), userId: req.session.userId, bookedAt: new Date().toISOString(), comment: comment?.trim() || '' };
 
     // Use $set on the full array to avoid any $push atomicity issues on Atlas M0
@@ -449,6 +469,7 @@ app.post('/api/trips/:id/messages', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Solo el conductor y los pasajeros pueden comentar' });
     const { text } = req.body;
     if (!text?.trim()) return res.status(400).json({ error: 'El mensaje no puede estar vacío' });
+    if (text.trim().length > 255) return res.status(400).json({ error: 'El mensaje no puede superar los 255 caracteres' });
     const message = { id: uuidv4(), userId: uid, text: text.trim(), createdAt: new Date().toISOString() };
     const updatedMessages = [...(trip.messages || []), message];
     await col('trips').updateOne({ id: req.params.id }, { $set: { messages: updatedMessages } }, { maxTimeMS: 10000 });
@@ -529,6 +550,7 @@ app.post('/api/forum/threads', requireAuth, async (req, res) => {
   try {
     const { title, content } = req.body;
     if (!title || !content) return res.status(400).json({ error: 'Título y mensaje son obligatorios' });
+    if (content.trim().length > 255) return res.status(400).json({ error: 'El mensaje no puede superar los 255 caracteres' });
     const thread = { id: uuidv4(), userId: req.session.userId, title, content, createdAt: new Date().toISOString(), replies: [], isReport: false };
     await col('threads').insertOne(thread);
     const u = await col('users').findOne({ id: req.session.userId });
@@ -540,6 +562,7 @@ app.post('/api/forum/threads/:id/replies', requireAuth, async (req, res) => {
   try {
     const { content } = req.body;
     if (!content?.trim()) return res.status(400).json({ error: 'El mensaje no puede estar vacío' });
+    if (content.trim().length > 255) return res.status(400).json({ error: 'El mensaje no puede superar los 255 caracteres' });
     const thread = await col('threads').findOne({ id: req.params.id });
     if (!thread) return res.status(404).json({ error: 'Hilo no encontrado' });
     const reply = { id: uuidv4(), userId: req.session.userId, content, createdAt: new Date().toISOString() };

@@ -55,6 +55,12 @@ function msgShow(id, text, type = 'error') {
   if (type === 'success') setTimeout(() => el.classList.add('hidden'), 4000);
 }
 function msgHide(id) { document.getElementById(id)?.classList.add('hidden'); }
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371, r = x => x * Math.PI / 180;
+  const dLat = r(lat2 - lat1), dLon = r(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(r(lat1)) * Math.cos(r(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 /* ══════════════════════════════════════════════════════════
    API
@@ -223,7 +229,15 @@ function showSection(id) {
   document.getElementById('navbar-links').classList.remove('open');
 
   if (id === 'sec1' && !state.searchMap)  { setTimeout(() => { state.searchMap  = createMap('map-search');  setupSearchAutocomplete(); }, 50); }
-  if (id === 'sec2' && !state.publishMap) { setTimeout(() => { state.publishMap = createMap('map-publish'); setupPublishAutocomplete(); }, 50); }
+  if (id === 'sec2') {
+    const todayStr   = new Date().toISOString().split('T')[0];
+    const maxDateStr = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    ['s2-date', 's2-recur-from', 's2-recur-to'].forEach(fid => {
+      const el = document.getElementById(fid);
+      if (el) { el.min = todayStr; el.max = maxDateStr; }
+    });
+    if (!state.publishMap) setTimeout(() => { state.publishMap = createMap('map-publish'); setupPublishAutocomplete(); }, 50);
+  }
   if (id === 'sec3') loadProfile();
   if (id === 'sec4') loadForumThreads();
   if (id === 'sec6') loadAdminStats();
@@ -292,7 +306,7 @@ function buildMessagesHtml(tripId, messages) {
       <div class="trip-messages-title">Conversación del viaje</div>
       <div class="trip-messages-list" id="trip-msgs-${esc(tripId)}">${msgItems}</div>
       <div class="trip-msg-form">
-        <textarea class="trip-msg-input" id="trip-msg-input-${esc(tripId)}" rows="2" placeholder="Escribe un mensaje para todos los participantes..."></textarea>
+        <textarea class="trip-msg-input" id="trip-msg-input-${esc(tripId)}" rows="2" maxlength="255" placeholder="Escribe un mensaje para todos los participantes..."></textarea>
         <button class="btn btn-primary btn-sm trip-msg-send-btn" data-trip-id="${esc(tripId)}">Enviar</button>
       </div>
     </div>`;
@@ -390,7 +404,7 @@ function renderSearchResults(trips) {
         ${buildTripDetail(t)}
         <div class="report-inline hidden" id="book-inline-${esc(t.id)}">
           <p>Mensaje opcional para el conductor (se incluirá en el email de notificación):</p>
-          <textarea rows="2" placeholder="Ej: Puedo salir 5 minutos antes si hace falta..." id="book-comment-${esc(t.id)}" maxlength="300"></textarea>
+          <textarea rows="2" placeholder="Ej: Puedo salir 5 minutos antes si hace falta..." id="book-comment-${esc(t.id)}" maxlength="255"></textarea>
           <div class="report-inline-actions">
             <button class="btn btn-primary btn-sm confirm-book-btn" data-trip-id="${esc(t.id)}">Confirmar reserva</button>
             <button class="btn btn-outline btn-sm cancel-book-inline-btn" data-trip-id="${esc(t.id)}">Cancelar</button>
@@ -704,6 +718,9 @@ async function publishTrip(e) {
   msgHide('s2-error'); msgHide('s2-success');
   if (!state.s2OriginCoords) { msgShow('s2-error', 'Selecciona el origen desde el desplegable de sugerencias.'); return; }
   if (!state.s2DestCoords)   { msgShow('s2-error', 'Selecciona el destino desde el desplegable de sugerencias.'); return; }
+
+  const distKm = haversineKm(state.s2OriginCoords.lat, state.s2OriginCoords.lng, state.s2DestCoords.lat, state.s2DestCoords.lng);
+  if (distKm < 1) { msgShow('s2-error', 'La distancia mínima entre origen y destino es de 1 km.'); return; }
 
   const recurrence = document.getElementById('s2-recurrence').value;
   const body = {
@@ -1019,7 +1036,7 @@ function renderThread(thread) {
     <div class="reply-form-wrap">
       <h4>Añadir respuesta</h4>
       <form id="reply-form" novalidate>
-        <div class="form-group"><textarea id="reply-content" rows="3" placeholder="Escribe tu respuesta..." required></textarea></div>
+        <div class="form-group"><textarea id="reply-content" rows="3" maxlength="255" placeholder="Escribe tu respuesta..." required></textarea></div>
         <div id="reply-error" class="msg msg-error hidden"></div>
         <button type="submit" class="btn btn-primary">Responder</button>
       </form>
@@ -1044,6 +1061,7 @@ function renderThread(thread) {
     const content = document.getElementById('reply-content').value.trim();
     msgHide('reply-error');
     if (!content) { msgShow('reply-error', 'El mensaje no puede estar vacío.'); return; }
+    if (content.length > 255) { msgShow('reply-error', 'El mensaje no puede superar los 255 caracteres.'); return; }
     try { await apiPost(`/api/forum/threads/${thread.id}/replies`, { content }); loadThread(thread.id); }
     catch (err) { msgShow('reply-error', err.message); }
   });
@@ -1055,6 +1073,7 @@ async function createThread(e) {
   const title   = document.getElementById('thread-title').value.trim();
   const content = document.getElementById('thread-content').value.trim();
   if (!title || !content) { msgShow('nf-error', 'Título y mensaje son obligatorios.'); return; }
+  if (content.length > 255) { msgShow('nf-error', 'El mensaje no puede superar los 255 caracteres.'); return; }
   try {
     const thread = await apiPost('/api/forum/threads', { title, content });
     document.getElementById('new-thread-form').reset();

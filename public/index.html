@@ -203,11 +203,11 @@
                 </div>
                 <div class="form-group">
                   <label for="s2-seats">Plazas disponibles <span class="req">*</span></label>
-                  <input type="number" id="s2-seats" min="1" max="8" value="2" required>
+                  <input type="number" id="s2-seats" min="1" max="6" value="2" required>
                 </div>
                 <div class="form-group">
                   <label for="s2-notes">Notas <span class="opt">(opcional)</span></label>
-                  <textarea id="s2-notes" rows="3" placeholder="Punto de encuentro, condiciones especiales..."></textarea>
+                  <textarea id="s2-notes" rows="3" maxlength="255" placeholder="Punto de encuentro, condiciones especiales..."></textarea>
                 </div>
                 <div id="s2-error" class="msg msg-error hidden"></div>
                 <div id="s2-success" class="msg msg-success hidden"></div>
@@ -348,7 +348,7 @@
               </div>
               <div class="form-group">
                 <label for="thread-content">Mensaje <span class="req">*</span></label>
-                <textarea id="thread-content" rows="5" placeholder="Escribe tu mensaje..." required></textarea>
+                <textarea id="thread-content" rows="5" maxlength="255" placeholder="Escribe tu mensaje..." required></textarea>
               </div>
               <div id="nf-error" class="msg msg-error hidden"></div>
               <div class="form-actions">
